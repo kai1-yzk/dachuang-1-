@@ -1,0 +1,120 @@
+version: '3.8'
+
+services:
+  # MySQL 数据库
+  mysql:
+    image: mysql:8.0
+    container_name: aiops_mysql
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=aiops_db
+    volumes:
+      - ./deploy/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - mysql_data:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    restart: unless-stopped
+
+  # Redis 缓存与消息队列
+  redis:
+    image: redis:6.2-alpine
+    container_name: aiops_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  # 后端 Flask API 服务 (替代原 Java)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aiops_backend
+    ports:
+      - "5000:5000"
+    environment:
+      - JWT_SECRET_KEY=super_secret_aiops_key
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=root
+      - DB_PASSWORD=root
+      - DB_NAME=aiops_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - mysql
+      - redis
+    restart: unless-stopped
+
+  # Celery 异步任务处理 Worker
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aiops_celery_worker
+    command: celery -A tasks.celery_app worker --loglevel=info
+    environment:
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=root
+      - DB_PASSWORD=root
+      - DB_NAME=aiops_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+      - mysql
+    restart: unless-stopped
+
+  # 前端 Vue.js Nginx 部署
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: aiops_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+  # 数据采集端 (Node Exporter 监控服务器本身)
+  node_exporter:
+    image: prom/node-exporter:v1.6.1
+    container_name: node_exporter
+    ports:
+      - "9100:9100"
+    restart: unless-stopped
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+
+  # Prometheus (用于Grafana接入)
+  prometheus:
+    image: prom/prometheus:v2.46.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml
+
+  # Grafana 可视化大盘
+  grafana:
+    image: grafana/grafana:10.0.3
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  mysql_data:

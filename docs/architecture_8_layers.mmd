@@ -1,0 +1,96 @@
+%% 8层系统架构图：多服务器运维管理
+```mermaid
+flowchart TB
+  %% 8-layer architecture diagram
+  subgraph L1[ L1: 终端数据源层 - 多源数据采集 ]
+    direction TB
+    Agents[Managed Servers / Agents\n(SSH / SNMP / Agent Push)\n提供指标与安全日志]
+    ExternalLogs[系统日志、设备日志、云监控数据]
+  end
+
+  subgraph L2[ L2: 数据采集层 - 数据采集技术 ]
+    direction TB
+    Collector[Collector 服务\n(HTTP/Agent 接收 / SSH / SNMP适配器)]
+    IngestMQ[(消息队列 MQ)]
+  end
+
+  subgraph L3[ L3: 数据预处理层 - 数据预处理模块 ]
+    direction TB
+    ETL[ETL / 预处理\n清洗 / 时序对齐 / 去噪 / 特征提取]
+    TSDB[(短期缓存/时序缓存\nRedis / 临时 TSDB)]
+  end
+
+  subgraph L4[ L4: 轻量化 AI 核心层 - 轻量化 AI 分析模块 ]
+    direction TB
+    AIEngine[AI 引擎\n轻量模型（LSTM/IsolationForest）\n模型融合与推理服务]
+    RiskEngine[风险评估 & 命令解析\n危险命令库 + AST 分析]
+  end
+
+  subgraph L5[ L5: 业务功能层 - 功能集成模块 ]
+    direction TB
+    Monitoring[监控与告警服务]
+    Orchestration[运维任务下发与调度\n会话管理（session）]
+    AuditSrv[审计服务\n写入 MySQL.audit_logs]
+    MetricsDB[(MySQL / metrics 存储)]
+  end
+
+  subgraph L6[ L6: 交互展示层 - 前端技术 ]
+    direction TB
+    Frontend[Web 前端 (Vue)\nTerminal.vue: WebSocket 终端 / 可视化仪表盘]
+    Mobile[移动端适配 / REST API]
+    Nginx[入口 Nginx / 负载均衡\nWS 代理 & SSL]
+  end
+
+  subgraph L7[ L7: 部署运维层 - 部署技术 ]
+    direction TB
+    Docker[Docker / Compose / K8s]
+    CI[CI/CD / 一键部署 脚本]
+    Celery[Celery Workers（异步采集/批处理）]
+    Redis[(Redis: Session / PubSub)]
+  end
+
+  subgraph L8[ L8: 安全约束层 - AI 命令安全约束 ]
+    direction TB
+    Security[权限控制（RBAC）\nMFA 短码流程\n审计链管理\n命令白名单/黑名单]
+  end
+
+  %% Flows
+  Agents --> Collector
+  ExternalLogs --> Collector
+  Collector --> IngestMQ
+  IngestMQ --> Celery
+  Celery --> ETL
+  ETL --> TSDB
+  ETL --> MetricsDB
+  TSDB --> AIEngine
+  MetricsDB --> AIEngine
+  AIEngine --> RiskEngine
+  RiskEngine --> AuditSrv
+  Orchestration --> RiskEngine
+  Orchestration --> AuditSrv
+  AuditSrv --> MetricsDB
+  Frontend -->|WS/REST| Nginx
+  Nginx --> Frontend
+  Frontend --> Orchestration
+  Frontend --> Monitoring
+  Monitoring --> MetricsDB
+  Celery --> MetricsDB
+
+  %% Cross-layer connections
+  Nginx --> Backend[后端 REST / WS 服务]
+  Backend --> AIEngine
+  Backend --> Orchestration
+  Backend --> AuditSrv
+  Backend --> MetricsDB
+  Backend --> Redis
+  Backend --> Celery
+
+  %% Security overlay
+  Security --- Backend
+  Security --- Frontend
+  Security --- Agents
+  Security --- AuditSrv
+
+  classDef layer fill:#f7f9fc,stroke:#333,stroke-width:1px
+  class L1,L2,L3,L4,L5,L6,L7,L8 layer
+```
