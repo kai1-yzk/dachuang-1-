@@ -16,6 +16,17 @@ auth_bp = Blueprint('auth', __name__)
 
 logger = logging.getLogger(__name__)
 
+_USER_HAS_ROLE_NAME = None
+
+
+def _user_has_role_name_column():
+    """兼容旧库结构：按需检测 user 表是否存在 role_name 列。"""
+    global _USER_HAS_ROLE_NAME
+    if _USER_HAS_ROLE_NAME is None:
+        rows = execute_query("SHOW COLUMNS FROM user LIKE %s", ('role_name',))
+        _USER_HAS_ROLE_NAME = bool(rows)
+    return _USER_HAS_ROLE_NAME
+
 def validate_password(password):
     """密码复杂度校验：至少8位，包含大小写字母、数字和特殊字符"""
     if len(password) < 8:
@@ -63,9 +74,14 @@ def register():
         password_hash = bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
         # 插入数据库
-        sql = "INSERT INTO user (username, email, password_hash, role_name) VALUES (%s, %s, %s, %s)"
+        if _user_has_role_name_column():
+            sql = "INSERT INTO user (username, email, password_hash, role_name) VALUES (%s, %s, %s, %s)"
+            params = (username, email, password_hash, 'operator')
+        else:
+            sql = "INSERT INTO user (username, email, password_hash) VALUES (%s, %s, %s)"
+            params = (username, email, password_hash)
         try:
-            affected = execute_update(sql, (username, email, password_hash, 'operator'))
+            affected = execute_update(sql, params)
         except Exception as db_e:
             logger.exception("数据库写入失败（注册用户）: %s", db_e)
             return jsonify({"code": 500, "message": "Database error"}), 500
@@ -94,7 +110,10 @@ def login():
     if not all([username, password]):
         return jsonify({"code": 400, "message": "Missing username or password"}), 400
         
-    users = execute_query("SELECT id, username, password_hash, role_name FROM user WHERE username=%s", (username,))
+    if _user_has_role_name_column():
+        users = execute_query("SELECT id, username, password_hash, role_name FROM user WHERE username=%s", (username,))
+    else:
+        users = execute_query("SELECT id, username, password_hash FROM user WHERE username=%s", (username,))
     if not users:
         return jsonify({"code": 401, "message": "Invalid credentials"}), 401
         
@@ -160,7 +179,10 @@ def refresh():
         user_id = payload['user_id']
         
         # 验证数据库中是否匹配 (防止token被主动吊销)
-        users = execute_query("SELECT refresh_token, username, role_name FROM user WHERE id=%s", (user_id,))
+        if _user_has_role_name_column():
+            users = execute_query("SELECT refresh_token, username, role_name FROM user WHERE id=%s", (user_id,))
+        else:
+            users = execute_query("SELECT refresh_token, username FROM user WHERE id=%s", (user_id,))
         if not users or users[0]['refresh_token'] != refresh_token:
             return jsonify({"code": 401, "message": "Invalid or revoked refresh token"}), 401
             

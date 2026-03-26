@@ -3,6 +3,8 @@ import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 
 // https://vitejs.dev/config/
+const backendTarget = process.env.VITE_BACKEND_TARGET || 'http://localhost:5001'
+
 export default defineConfig({
   plugins: [vue()],
   resolve: {
@@ -14,11 +16,11 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api': {
-        target: 'http://localhost:5000',
+        target: backendTarget,
         changeOrigin: true
       },
       '/socket.io': {
-        target: 'http://localhost:5000',
+        target: backendTarget,
         ws: true,
         changeOrigin: true
       }
