@@ -1,4 +1,5 @@
 import datetime
+import json
 import secrets
 from typing import Dict
 
@@ -8,6 +9,7 @@ from flask_socketio import emit, join_room
 
 from services.audit_service import write_audit_log
 from services.command_risk_service import evaluate_risk, to_command
+from services.ssh_service import run_command_stream, validate_server_ssh_config
 from utils.db import execute_query, execute_update
 
 SESSION_TIMEOUT_SECONDS = 15 * 60
@@ -26,6 +28,13 @@ def _upsert_session(session_id: str, user_id: int, server_id: int):
         ON DUPLICATE KEY UPDATE last_activity=NOW(), status='active', updated_at=NOW()
         """,
         (session_id, user_id, server_id),
+    )
+
+
+def _close_session(session_id: str, status: str):
+    execute_update(
+        "UPDATE terminal_sessions SET status=%s, updated_at=NOW() WHERE session_id=%s",
+        (status, session_id),
     )
 
 
@@ -76,6 +85,11 @@ def init_ws_handlers(socketio):
             return
 
         role_name = user.get("role", "operator")
+        config_check = validate_server_ssh_config(server_id)
+        if not config_check.get("ok"):
+            emit("terminal_error", {"message": config_check.get("message", "server ssh config invalid")})
+            return
+
         session_id = secrets.token_urlsafe(16)
         active_sessions[session_id] = {
             "user_id": user.get("user_id"),
@@ -106,7 +120,7 @@ def init_ws_handlers(socketio):
         now = datetime.datetime.utcnow()
         if (now - session["last_activity"]).total_seconds() > SESSION_TIMEOUT_SECONDS:
             emit("terminal_timeout", {"message": "session timeout"}, room=session_id)
-            execute_update("UPDATE terminal_sessions SET status='timeout', updated_at=NOW() WHERE session_id=%s", (session_id,))
+            _close_session(session_id, "timeout")
             active_sessions.pop(session_id, None)
             return
 
@@ -159,15 +173,72 @@ def init_ws_handlers(socketio):
             )
             return
 
-        emit(
-            "terminal_output",
-            {
-                "type": "output",
-                "text": f"[server-{session['server_id']}] Executed: {evaluated['command']}\nOK",
-                "audit": evaluated,
-            },
-            room=session_id,
-        )
+        try:
+            ssh_result = run_command_stream(session["server_id"], evaluated["command"])
+            for chunk in ssh_result.get("chunks", []):
+                emit(
+                    "terminal_output",
+                    {
+                        "type": "output",
+                        "stream": chunk.get("stream", "stdout"),
+                        "text": chunk.get("text", ""),
+                        "audit": evaluated,
+                    },
+                    room=session_id,
+                )
+
+            emit(
+                "terminal_output",
+                {
+                    "type": "system",
+                    "text": f"[exit_status={ssh_result.get('exit_status', 0)}]",
+                    "audit": evaluated,
+                },
+                room=session_id,
+            )
+
+            write_audit_log(
+                {
+                    "user_id": session["user_id"],
+                    "username": session["username"],
+                    "role_name": session["role_name"],
+                    "server_id": session["server_id"],
+                    "session_id": session_id,
+                    "command_raw": user_text,
+                    "command_parsed": evaluated["parsed_command"],
+                    "risk_score": evaluated["risk_score"],
+                    "risk_level": evaluated["risk_level"],
+                    "action": "execute_result",
+                    "result": "success",
+                    "detail": json.dumps({"exit_status": ssh_result.get("exit_status", 0)}, ensure_ascii=False),
+                }
+            )
+        except Exception as e:
+            emit(
+                "terminal_output",
+                {
+                    "type": "blocked",
+                    "text": f"SSH execution failed: {str(e)}",
+                    "audit": evaluated,
+                },
+                room=session_id,
+            )
+            write_audit_log(
+                {
+                    "user_id": session["user_id"],
+                    "username": session["username"],
+                    "role_name": session["role_name"],
+                    "server_id": session["server_id"],
+                    "session_id": session_id,
+                    "command_raw": user_text,
+                    "command_parsed": evaluated["parsed_command"],
+                    "risk_score": evaluated["risk_score"],
+                    "risk_level": evaluated["risk_level"],
+                    "action": "execute_result",
+                    "result": "failed",
+                    "detail": str(e),
+                }
+            )
 
     @socketio.on("mfa_confirm")
     def mfa_confirm(payload):
@@ -191,5 +262,5 @@ def init_ws_handlers(socketio):
     def terminal_disconnect(payload):
         session_id = (payload or {}).get("session_id")
         if session_id and session_id in active_sessions:
-            execute_update("UPDATE terminal_sessions SET status='closed', updated_at=NOW() WHERE session_id=%s", (session_id,))
+            _close_session(session_id, "closed")
             active_sessions.pop(session_id, None)

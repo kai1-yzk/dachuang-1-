@@ -107,6 +107,30 @@ python agent_client.py
 - `GET /api/audit/logs?limit=100`
 - `GET /api/servers/`
 - `GET /api/servers/{id}`
+- `PUT /api/servers/{id}/ssh-config`（配置 SSH 登录，支持 `password` / `key`）
+
+示例请求（密码登录）：
+
+```json
+{
+	"auth_type": "password",
+	"ssh_username": "root",
+	"ssh_password": "your_password",
+	"connect_timeout": 15
+}
+```
+
+示例请求（密钥登录）：
+
+```json
+{
+	"auth_type": "key",
+	"ssh_username": "ubuntu",
+	"private_key": "-----BEGIN OPENSSH PRIVATE KEY-----...",
+	"private_key_passphrase": "optional",
+	"connect_timeout": 15
+}
+```
 
 ### 6.4 终端 WebSocket 事件
 
@@ -150,3 +174,4 @@ python agent_client.py
 - 生产环境请使用环境变量管理密钥与数据库凭据。
 - `mfa/request-code` 在演示环境返回 `demo_code`，生产请接入短信/邮件网关。
 - Flask 内存限流适合单实例，生产建议切换 Redis 存储。
+- `SSH_STRICT_HOST_KEY=false` 时会自动接受未知主机指纹（便于测试）；生产建议开启严格模式。

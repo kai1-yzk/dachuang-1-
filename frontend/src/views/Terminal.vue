@@ -16,6 +16,14 @@
       </div>
 
       <div class="input-area">
+        <el-input-number
+          v-model="serverId"
+          :min="1"
+          size="small"
+          class="server-input"
+          @change="reconnectTerminal"
+        />
+        <el-button type="primary" size="small" @click="reconnectTerminal">连接服务器</el-button>
         <span class="prompt">[admin@ai-ops] $</span>
         <input 
           v-model="currentInput" 
@@ -139,6 +147,19 @@ const connectTerminal = () => {
   })
 }
 
+const reconnectTerminal = () => {
+  if (socket.value && sessionId.value) {
+    socket.value.emit('terminal_disconnect', { session_id: sessionId.value })
+  }
+  sessionId.value = ''
+  if (socket.value) {
+    socket.value.disconnect()
+    socket.value = null
+  }
+  history.value.push({ type: 'system', text: `正在连接 server_id=${serverId.value}...` })
+  connectTerminal()
+}
+
 const handleCommand = async () => {
   if (!currentInput.value.trim()) return
   if (!socket.value || !sessionId.value) {
@@ -242,6 +263,11 @@ onUnmounted(() => {
   font-family: 'Consolas', 'Courier New', monospace;
   font-size: 14px;
   outline: none;
+}
+
+.server-input {
+  width: 120px;
+  margin-right: 8px;
 }
 
 .mt-20 {

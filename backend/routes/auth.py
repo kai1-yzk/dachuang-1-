@@ -58,7 +58,7 @@ def register():
         if existing:
             return jsonify({"code": 409, "message": "Username or email already exists"}), 409
 
-        # 哈希密码
+        # 将密码字符串编码为字节，然后再哈希
         salt = bcrypt.gensalt()
         password_hash = bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
@@ -99,8 +99,12 @@ def login():
         return jsonify({"code": 401, "message": "Invalid credentials"}), 401
         
     user = users[0]
-    if not bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
-        return jsonify({"code": 401, "message": "Invalid credentials"}), 401
+    try:
+        if not bcrypt.checkpw(password.encode('utf-8'), str(user['password_hash']).encode('utf-8')):
+            return jsonify({"code": 401, "message": "Invalid credentials (password mismatch)"}), 401
+    except Exception as e:
+        logger.exception("Bcrypt check failed: %s", e)
+        return jsonify({"code": 401, "message": "Invalid credentials (hash error)"}), 401
         
     # 生成双令牌
     secret_key = current_app.config['JWT_SECRET_KEY']
