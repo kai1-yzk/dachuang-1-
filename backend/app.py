@@ -50,8 +50,7 @@ def create_app():
     socketio.init_app(app)
     
     # 随机生成 256-bit (32 bytes) 密钥，或使用环境变量
-    # 固定秘钥，防止重启后 Token 失效，或者存入环境变量
-    app.config['JWT_SECRET_KEY'] = os.environ.get("JWT_SECRET_KEY", "your-fixed-secret-key-for-dev")
+    app.config['JWT_SECRET_KEY'] = os.environ.get("JWT_SECRET_KEY", secrets.token_hex(32))
     
     # 注册中间件
     @app.before_request
@@ -92,4 +91,4 @@ def create_app():
 
 if __name__ == '__main__':
     app = create_app()
-    socketio.run(app, host='0.0.0.0', port=5000, debug=False)
+    socketio.run(app, host='0.0.0.0', port=5001, debug=False)
