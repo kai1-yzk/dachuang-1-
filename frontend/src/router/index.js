@@ -24,9 +24,21 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
+    path: '/metrics/trend',
+    name: 'MetricTrend',
+    component: () => import('../views/MetricTrend.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
     path: '/terminal',
     name: 'Terminal',
     component: () => import('../views/Terminal.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/servers',
+    name: 'Servers',
+    component: () => import('../views/Servers.vue'),
     meta: { requiresAuth: true }
   },
   {

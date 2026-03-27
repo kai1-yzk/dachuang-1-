@@ -1,7 +1,7 @@
 """监控指标路由：支持 SSH 实时采集与大屏展示。"""
 from flask import Blueprint, jsonify, request
 
-from services.server_metrics_service import collect_all_ssh_metrics, get_dashboard_payload
+from services.server_metrics_service import collect_all_ssh_metrics, get_dashboard_payload, get_metric_trend
 
 metrics_bp = Blueprint('metrics', __name__)
 
@@ -38,7 +38,7 @@ def dashboard_metrics():
     """返回监控大屏需要的真实数据；可选触发即时采集。"""
     server_id = request.args.get('server_id', type=int)
     points = request.args.get('points', default=12, type=int)
-    collect_now = request.args.get('collect_now', default='1')
+    collect_now = request.args.get('collect_now', default='0')
 
     collected = None
     if str(collect_now).strip() in ('1', 'true', 'True'):
@@ -53,3 +53,21 @@ def dashboard_metrics():
             "collect_result": collected,
         }
     })
+
+
+@metrics_bp.route('/trend', methods=['GET'])
+def metric_trend():
+    metric = request.args.get('metric', default='cpu')
+    period = request.args.get('period', default='1h')
+    server_id = request.args.get('server_id', type=int)
+    start_time = request.args.get('start_time')
+    end_time = request.args.get('end_time')
+
+    data = get_metric_trend(
+        metric=metric,
+        period=period,
+        server_id=server_id,
+        start_time=start_time,
+        end_time=end_time,
+    )
+    return jsonify({"code": 200, "message": "ok", "data": data})

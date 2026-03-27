@@ -1,4 +1,7 @@
 import re
+import os
+import threading
+import time
 from typing import Dict, List, Optional
 
 from services.ssh_service import run_command_stream
@@ -13,6 +16,17 @@ METRICS_COMMAND = (
     "NET=$(cat /proc/net/dev | awk 'NR>2 {rx+=$2; tx+=$10} END {printf(\"%.2f\", (rx+tx)/1024/1024)}'); "
     "echo CPU=$CPU MEM=$MEM DISK=$DISK NET=$NET"
 )
+
+_AUTO_COLLECTOR_STARTED = False
+_AUTO_COLLECTOR_LOCK = threading.Lock()
+
+
+def _to_positive_int(raw, default_value: int) -> int:
+    try:
+        value = int(raw)
+        return value if value > 0 else default_value
+    except Exception:
+        return default_value
 
 
 def _parse_metrics_text(text: str) -> Optional[Dict[str, float]]:
@@ -94,6 +108,31 @@ def collect_all_ssh_metrics() -> List[Dict]:
     return results
 
 
+def start_auto_collector() -> None:
+    global _AUTO_COLLECTOR_STARTED
+    with _AUTO_COLLECTOR_LOCK:
+        if _AUTO_COLLECTOR_STARTED:
+            return
+        _AUTO_COLLECTOR_STARTED = True
+
+    enabled = str(os.environ.get("AUTO_COLLECT_ENABLED", "1")).strip().lower() in ("1", "true", "yes", "on")
+    if not enabled:
+        return
+
+    interval_seconds = _to_positive_int(os.environ.get("AUTO_COLLECT_INTERVAL_SECONDS", "5"), 5)
+
+    def _loop():
+        while True:
+            try:
+                collect_all_ssh_metrics()
+            except Exception:
+                pass
+            time.sleep(interval_seconds)
+
+    thread = threading.Thread(target=_loop, name="aiops-metrics-auto-collector", daemon=True)
+    thread.start()
+
+
 def get_dashboard_payload(server_id: Optional[int] = None, points: int = 12) -> Dict:
     if server_id:
         where_sql = "WHERE m.server_id=%s"
@@ -167,4 +206,64 @@ def get_dashboard_payload(server_id: Optional[int] = None, points: int = 12) -> 
             }
             for row in trend_rows
         ],
+    }
+
+
+def get_metric_trend(metric: str, period: str, server_id: Optional[int] = None, start_time: Optional[str] = None, end_time: Optional[str] = None) -> Dict:
+    metric_map = {
+        "cpu": "cpu_usage",
+        "memory": "memory_usage",
+        "disk": "disk_usage",
+        "network": "(network_rx_mb + network_tx_mb)",
+    }
+    metric_key = (metric or "cpu").strip().lower()
+    metric_sql = metric_map.get(metric_key, "cpu_usage")
+
+    where_parts = []
+    args: List = []
+
+    if server_id:
+        where_parts.append("server_id=%s")
+        args.append(server_id)
+
+    if period == "1h":
+        where_parts.append("created_at >= NOW() - INTERVAL 1 HOUR")
+    elif period == "6h":
+        where_parts.append("created_at >= NOW() - INTERVAL 6 HOUR")
+    elif period == "24h":
+        where_parts.append("created_at >= NOW() - INTERVAL 24 HOUR")
+    elif period == "custom" and start_time and end_time:
+        where_parts.append("created_at BETWEEN %s AND %s")
+        args.extend([start_time, end_time])
+    else:
+        where_parts.append("created_at >= NOW() - INTERVAL 1 HOUR")
+
+    where_sql = "WHERE " + " AND ".join(where_parts) if where_parts else ""
+
+    rows = execute_query(
+        f"""
+        SELECT DATE_FORMAT(created_at, '%%Y-%%m-%%d %%H:%%i:%%s') AS ts,
+               {metric_sql} AS metric_value
+        FROM server_metrics
+        {where_sql}
+        ORDER BY created_at ASC
+        """,
+        tuple(args) if args else None,
+    )
+
+    points = [
+        {
+            "time": row.get("ts"),
+            "value": round(float(row.get("metric_value") or 0.0), 3),
+        }
+        for row in (rows or [])
+    ]
+
+    latest = points[-1]["value"] if points else 0.0
+    return {
+        "metric": metric_key,
+        "period": period,
+        "count": len(points),
+        "latest": latest,
+        "points": points,
     }

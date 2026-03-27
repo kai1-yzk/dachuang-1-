@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 
 import paramiko
 
+from utils.crypto import decrypt_secret
 from utils.db import execute_query
 
 
@@ -43,9 +44,9 @@ def _load_server_config(server_id: int) -> Dict[str, Any]:
         "port": int(row.get("port") or 22),
         "auth_type": (row.get("auth_type") or "password").lower(),
         "username": auth_data.get("ssh_username") or auth_data.get("username"),
-        "password": auth_data.get("ssh_password") or auth_data.get("password"),
-        "private_key": auth_data.get("private_key"),
-        "private_key_passphrase": auth_data.get("private_key_passphrase"),
+        "password": decrypt_secret(auth_data.get("ssh_password") or auth_data.get("password")),
+        "private_key": decrypt_secret(auth_data.get("private_key")),
+        "private_key_passphrase": decrypt_secret(auth_data.get("private_key_passphrase")),
         "timeout": int(auth_data.get("connect_timeout") or os.environ.get("SSH_DEFAULT_TIMEOUT", "15")),
     }
 

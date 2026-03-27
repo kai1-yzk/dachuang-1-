@@ -1,9 +1,26 @@
 from flask import Blueprint, jsonify, request
+import datetime
+import secrets
 
+from services.command_risk_service import evaluate_risk, to_command
+from services.ssh_service import run_command_stream
 from utils.db import execute_query, execute_update
 from utils.security import ensure_role, get_request_tenant_id
 
 assistant_bp = Blueprint("assistant", __name__)
+_PENDING_OPS = {}
+_OPS_TOKEN_TTL_SECONDS = 300
+
+
+def _is_admin_role(role: str) -> bool:
+    return role in {"tenant_admin", "platform_admin", "superadmin"}
+
+
+def _cleanup_pending_tokens():
+    now = datetime.datetime.utcnow()
+    expired_keys = [k for k, v in _PENDING_OPS.items() if v.get("expires_at") < now]
+    for key in expired_keys:
+        _PENDING_OPS.pop(key, None)
 
 
 def _safe_has_table(name: str) -> bool:
@@ -129,3 +146,110 @@ def approve_suggestion():
     )
 
     return jsonify({"code": 200, "message": "approved", "data": {"approved": True}})
+
+
+@assistant_bp.route("/ops-plan", methods=["POST"])
+def ops_plan():
+    deny = ensure_role(request, {"tenant_admin", "tenant_operator", "platform_admin", "superadmin", "operator"})
+    if deny:
+        return deny
+
+    payload = request.get_json(silent=True) or {}
+    command_text = (payload.get("command") or "").strip()
+    server_id = int(payload.get("server_id") or 0)
+    if not command_text or not server_id:
+        return jsonify({"code": 400, "message": "command and server_id are required", "data": None}), 400
+
+    role = getattr(request, "user", {}).get("role", "operator")
+    mapped = to_command(command_text)
+    evaluated = evaluate_risk(mapped.get("command") or command_text, role, force_approved=False)
+
+    steps = [
+        "1) 建议先执行命令前置检查（资源与权限）",
+        f"2) 执行命令: {evaluated.get('command')}",
+        "3) 校验执行结果是否符合预期，并记录审计日志",
+    ]
+    expected = "命令正常返回退出状态 exit_status=0，目标服务状态恢复或指标回落。"
+
+    token = secrets.token_urlsafe(18)
+    _cleanup_pending_tokens()
+    _PENDING_OPS[token] = {
+        "user_id": int(getattr(request, "user", {}).get("user_id") or 0),
+        "role": role,
+        "server_id": server_id,
+        "command": evaluated.get("command") or command_text,
+        "risk_level": evaluated.get("risk_level"),
+        "expires_at": datetime.datetime.utcnow() + datetime.timedelta(seconds=_OPS_TOKEN_TTL_SECONDS),
+    }
+
+    data = {
+        "solution": {
+            "steps": steps,
+            "expected_effect": expected,
+        },
+        "risk": {
+            "level": evaluated.get("risk_level"),
+            "score": evaluated.get("risk_score"),
+            "is_high_risk": evaluated.get("risk_level") == "HIGH",
+            "risk_consequence": "可能导致服务中断或数据丢失" if evaluated.get("risk_level") == "HIGH" else "风险可控",
+        },
+        "requires_explicit_consent": True,
+        "execution_token": token,
+        "token_ttl_seconds": _OPS_TOKEN_TTL_SECONDS,
+        "ask": "是否允许AI自动执行该命令？",
+    }
+    return jsonify({"code": 200, "message": "ok", "data": data})
+
+
+@assistant_bp.route("/ops-execute", methods=["POST"])
+def ops_execute():
+    deny = ensure_role(request, {"tenant_admin", "platform_admin", "superadmin", "operator"})
+    if deny:
+        return deny
+
+    payload = request.get_json(silent=True) or {}
+    token = (payload.get("execution_token") or "").strip()
+    consent = bool(payload.get("consent", False))
+    high_risk_confirmed = bool(payload.get("high_risk_confirmed", False))
+    if not token:
+        return jsonify({"code": 400, "message": "execution_token is required", "data": None}), 400
+
+    _cleanup_pending_tokens()
+    pending = _PENDING_OPS.get(token)
+    if not pending:
+        return jsonify({"code": 404, "message": "execution token expired or invalid", "data": None}), 404
+
+    current_user_id = int(getattr(request, "user", {}).get("user_id") or 0)
+    current_role = getattr(request, "user", {}).get("role", "operator")
+    if pending.get("user_id") != current_user_id:
+        return jsonify({"code": 403, "message": "token does not belong to current user", "data": None}), 403
+
+    if not _is_admin_role(current_role):
+        return jsonify({"code": 403, "message": "only admin can execute operation", "data": None}), 403
+
+    if not consent:
+        return jsonify({"code": 400, "message": "consent required before execution", "data": None}), 400
+
+    if pending.get("risk_level") == "HIGH" and not high_risk_confirmed:
+        return jsonify({
+            "code": 409,
+            "message": "high risk command requires second confirmation",
+            "data": {"risk_level": "极高风险", "risk_consequence": "可能导致数据丢失或业务中断"},
+        }), 409
+
+    try:
+        result = run_command_stream(int(pending["server_id"]), str(pending["command"]), timeout=25)
+        stdout = "".join(c.get("text", "") for c in result.get("chunks", []) if c.get("stream") == "stdout")
+        stderr = "".join(c.get("text", "") for c in result.get("chunks", []) if c.get("stream") == "stderr")
+        _PENDING_OPS.pop(token, None)
+        return jsonify({
+            "code": 200,
+            "message": "executed",
+            "data": {
+                "exit_status": int(result.get("exit_status") or 0),
+                "stdout": stdout[-3000:],
+                "stderr": stderr[-1500:],
+            },
+        })
+    except Exception as e:
+        return jsonify({"code": 500, "message": f"execute failed: {str(e)}", "data": None}), 500

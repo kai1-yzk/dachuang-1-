@@ -22,6 +22,7 @@ from routes.servers import servers_bp
 from routes.assistant import assistant_bp
 from routes.tenants import tenants_bp
 from routes.ws_terminal import init_ws_handlers
+from services.server_metrics_service import start_auto_collector
 from utils.security import rbac_middleware, security_headers_middleware
 
 # 配置日志
@@ -79,6 +80,7 @@ def create_app():
     app.register_blueprint(servers_bp, url_prefix='/api/servers')
     app.register_blueprint(assistant_bp, url_prefix='/api/assistant')
     app.register_blueprint(tenants_bp, url_prefix='/api/tenants')
+    start_auto_collector()
     init_ws_handlers(socketio)
     
     @app.errorhandler(Exception)
@@ -95,4 +97,4 @@ def create_app():
 
 if __name__ == '__main__':
     app = create_app()
-    socketio.run(app, host='0.0.0.0', zai port=5001, debug=False)
+    socketio.run(app, host='0.0.0.0', port=5001, debug=False)

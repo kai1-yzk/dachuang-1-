@@ -98,6 +98,68 @@ def _load_server_metric_series(server_id: int, tenant_id: int, limit: int = 120)
         },
     }
 
+
+def _build_alert_detail(packet: dict, prediction: dict):
+    series = packet.get("series", {}) if packet else {}
+    cpu_values = series.get("cpu_usage", [])
+    memory_values = series.get("memory_usage", [])
+    disk_values = series.get("disk_usage", [])
+    network_values = series.get("network_total", [])
+
+    current_cpu = float(cpu_values[-1] if cpu_values else 0.0)
+    current_mem = float(memory_values[-1] if memory_values else 0.0)
+    current_disk = float(disk_values[-1] if disk_values else 0.0)
+    current_net = float(network_values[-1] if network_values else 0.0)
+
+    fault_type = "系统负载异常"
+    cause = "多个资源指标出现异常波动"
+    emergency = "先检查系统活跃进程并释放高负载任务"
+    prevention = "配置容量冗余并设置分级阈值告警"
+
+    top_metric = max([
+        ("CPU过载", current_cpu),
+        ("内存不足", current_mem),
+        ("磁盘压力过高", current_disk),
+    ], key=lambda x: x[1])[0]
+    if top_metric == "CPU过载":
+        cause = f"CPU负载连续高位，当前值 {current_cpu:.2f}%"
+        emergency = "关闭非必要进程，并限制高CPU任务"
+        prevention = "升级CPU配置或优化任务调度策略"
+    elif top_metric == "内存不足":
+        cause = f"内存使用率持续偏高，当前值 {current_mem:.2f}%"
+        emergency = "释放缓存并排查内存泄漏进程"
+        prevention = "增加内存容量并设置应用内存配额"
+    elif top_metric == "磁盘压力过高":
+        cause = f"磁盘使用率接近阈值，当前值 {current_disk:.2f}%"
+        emergency = "清理临时与历史日志文件，释放可用空间"
+        prevention = "扩容磁盘并配置日志轮转策略"
+
+    if prediction.get("is_anomaly"):
+        score = float(prediction.get("anomaly_score") or 0)
+        if score >= 0.75 or current_cpu >= 90 or current_mem >= 90 or current_disk >= 90:
+            risk_level = "高"
+        elif score >= 0.45 or current_cpu >= 80 or current_mem >= 80 or current_disk >= 80:
+            risk_level = "中"
+        else:
+            risk_level = "低"
+    else:
+        risk_level = "低"
+
+    return {
+        "fault_type": top_metric if prediction.get("is_anomaly") else "未检测到故障",
+        "risk_level": risk_level,
+        "lead_time_minutes": 10,
+        "cause": cause,
+        "emergency_solution": emergency,
+        "prevention_advice": prevention,
+        "metrics_snapshot": {
+            "cpu": round(current_cpu, 2),
+            "memory": round(current_mem, 2),
+            "disk": round(current_disk, 2),
+            "network": round(current_net, 2),
+        },
+    }
+
 @ai_bp.route('/predict', methods=['POST'])
 def predict_anomaly():
     """
@@ -153,6 +215,30 @@ def predict_server_anomaly(server_id: int):
             "data": {
                 "server_id": server_id,
                 **result,
+            }
+        })
+    except Exception as e:
+        return jsonify({"code": 500, "message": f"Prediction failed: {str(e)}"}), 500
+
+
+@ai_bp.route('/predict-alert/<int:server_id>', methods=['GET'])
+def predict_alert(server_id: int):
+    try:
+        predictor = _load_server_predictor()
+        packet = _load_server_metric_series(server_id, get_request_tenant_id(request), limit=120)
+        if not packet:
+            return jsonify({"code": 404, "message": "No server metrics found"}), 404
+
+        result = predictor.predict_multivariate(packet['series'], packet['timestamps'])
+        alert = _build_alert_detail(packet, result)
+
+        return jsonify({
+            "code": 200,
+            "message": "Prediction Success",
+            "data": {
+                "server_id": server_id,
+                **result,
+                "alert": alert,
             }
         })
     except Exception as e:

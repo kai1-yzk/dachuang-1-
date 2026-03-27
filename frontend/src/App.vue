@@ -20,9 +20,9 @@
           <el-icon><Monitor /></el-icon>
           <span>AI 智能终端</span>
         </el-menu-item>
-        <el-menu-item index="/tenants">
-          <el-icon><OfficeBuilding /></el-icon>
-          <span>多租户管理</span>
+        <el-menu-item index="/servers">
+          <el-icon><Setting /></el-icon>
+          <span>服务器管理</span>
         </el-menu-item>
         <el-menu-item index="/assistant">
           <el-icon><ChatDotRound /></el-icon>

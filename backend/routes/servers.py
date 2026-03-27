@@ -4,8 +4,9 @@ from flask import Blueprint, jsonify, request
 
 from services.agent_service import list_servers
 from services.ssh_service import run_command_stream, validate_server_ssh_config
+from utils.crypto import encrypt_secret
 from utils.db import execute_query, execute_update
-from utils.security import get_request_tenant_id
+from utils.security import ensure_role, get_request_tenant_id
 
 servers_bp = Blueprint("servers", __name__)
 
@@ -57,6 +58,10 @@ def _validate_ssh_payload(data):
     return None
 
 
+def _admin_only_guard():
+    return ensure_role(request, {"tenant_admin", "platform_admin", "superadmin"})
+
+
 @servers_bp.route("/", methods=["GET"])
 def list_all():
     tenant_id = get_request_tenant_id(request)
@@ -71,6 +76,10 @@ def list_all():
 
 @servers_bp.route("/", methods=["POST"])
 def create_or_update_ssh_server():
+    deny = _admin_only_guard()
+    if deny:
+        return deny
+
     tenant_id = get_request_tenant_id(request)
     payload = request.get_json(silent=True) or {}
     data = _normalize_server_payload(payload)
@@ -80,9 +89,9 @@ def create_or_update_ssh_server():
 
     auth_data = {
         "ssh_username": data["ssh_username"],
-        "ssh_password": data["ssh_password"] if data["auth_type"] == "password" else None,
-        "private_key": data["private_key"] if data["auth_type"] == "key" else None,
-        "private_key_passphrase": data["private_key_passphrase"] if data["auth_type"] == "key" else None,
+        "ssh_password": encrypt_secret(data["ssh_password"]) if data["auth_type"] == "password" else None,
+        "private_key": encrypt_secret(data["private_key"]) if data["auth_type"] == "key" else None,
+        "private_key_passphrase": encrypt_secret(data["private_key_passphrase"]) if data["auth_type"] == "key" else None,
         "connect_timeout": data["connect_timeout"],
     }
     auth_data_json = json.dumps(auth_data, ensure_ascii=False)
@@ -180,6 +189,10 @@ def detail(server_id: int):
 
 @servers_bp.route("/<int:server_id>/ssh-config", methods=["PUT"])
 def update_ssh_config(server_id: int):
+    deny = _admin_only_guard()
+    if deny:
+        return deny
+
     tenant_id = get_request_tenant_id(request)
     payload = request.get_json(silent=True) or {}
     auth_type = (payload.get("auth_type") or "password").lower()
@@ -207,9 +220,9 @@ def update_ssh_config(server_id: int):
 
     auth_data = {
         "ssh_username": ssh_username,
-        "ssh_password": ssh_password if auth_type == "password" else None,
-        "private_key": private_key if auth_type == "key" else None,
-        "private_key_passphrase": private_key_passphrase if auth_type == "key" else None,
+        "ssh_password": encrypt_secret(ssh_password) if auth_type == "password" else None,
+        "private_key": encrypt_secret(private_key) if auth_type == "key" else None,
+        "private_key_passphrase": encrypt_secret(private_key_passphrase) if auth_type == "key" else None,
         "connect_timeout": connect_timeout,
     }
 
@@ -249,6 +262,10 @@ def update_ssh_config(server_id: int):
 
 @servers_bp.route("/<int:server_id>/ssh-test", methods=["POST"])
 def test_ssh_connection(server_id: int):
+    deny = _admin_only_guard()
+    if deny:
+        return deny
+
     tenant_id = get_request_tenant_id(request)
     if _servers_has_tenant_id_column():
         owns = execute_query("SELECT id FROM servers WHERE id=%s AND tenant_id=%s LIMIT 1", (server_id, tenant_id))
@@ -267,3 +284,26 @@ def test_ssh_connection(server_id: int):
         return jsonify({"code": 200, "message": "ssh connection success", "data": {"server_id": server_id}})
     except Exception as e:
         return jsonify({"code": 500, "message": f"ssh connection failed: {str(e)}", "data": None}), 500
+
+
+@servers_bp.route("/<int:server_id>", methods=["DELETE"])
+def delete_server(server_id: int):
+    deny = _admin_only_guard()
+    if deny:
+        return deny
+
+    payload = request.get_json(silent=True) or {}
+    confirm = bool(payload.get("confirm", False))
+    if not confirm:
+        return jsonify({"code": 400, "message": "confirm=true is required", "data": None}), 400
+
+    tenant_id = get_request_tenant_id(request)
+    if _servers_has_tenant_id_column():
+        exists = execute_query("SELECT id FROM servers WHERE id=%s AND tenant_id=%s LIMIT 1", (server_id, tenant_id))
+    else:
+        exists = execute_query("SELECT id FROM servers WHERE id=%s LIMIT 1", (server_id,))
+    if not exists:
+        return jsonify({"code": 404, "message": "server not found", "data": None}), 404
+
+    execute_update("DELETE FROM servers WHERE id=%s", (server_id,))
+    return jsonify({"code": 200, "message": "server deleted", "data": {"server_id": server_id}})

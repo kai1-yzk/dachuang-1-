@@ -1,9 +1,8 @@
 <template>
   <div class="dashboard">
     <el-row :gutter="20">
-      <!-- 核心指标卡片 -->
-      <el-col :span="6" v-for="item in summaryCards" :key="item.title">
-        <el-card shadow="hover" class="data-card" :body-style="{ padding: '20px' }">
+      <el-col :span="6" v-for="item in summaryCards" :key="item.metricKey">
+        <el-card shadow="hover" class="data-card clickable" :body-style="{ padding: '20px' }" @click="goMetric(item.metricKey)">
           <div class="card-header">
             <span>{{ item.title }}</span>
             <el-icon :class="item.iconClass"><component :is="item.icon" /></el-icon>
@@ -19,20 +18,29 @@
     </el-row>
 
     <el-row :gutter="20" class="mt-20">
-      <!-- AI 分析状态 -->
       <el-col :span="16">
         <el-card shadow="hover" class="chart-card">
           <template #header>
             <div class="card-header-title">
-              <span>AI 时序预测与实时负载趋势</span>
+              <span>AI 故障预测与报警详情</span>
               <el-tag :type="aiStatus.type" size="small">{{ aiStatus.text }}</el-tag>
             </div>
           </template>
-          <div ref="lineChartRef" class="chart-container"></div>
+          <el-descriptions v-if="prediction.alert" :column="2" border size="small" class="predict-box">
+            <el-descriptions-item label="故障类型">{{ prediction.alert.fault_type }}</el-descriptions-item>
+            <el-descriptions-item label="风险等级">
+              <el-tag :type="riskType(prediction.alert.risk_level)">{{ prediction.alert.risk_level }}</el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="预测提前量">{{ prediction.alert.lead_time_minutes }} 分钟</el-descriptions-item>
+            <el-descriptions-item label="异常分数">{{ Number(prediction.anomaly_score || 0).toFixed(3) }}</el-descriptions-item>
+            <el-descriptions-item label="故障起因" :span="2">{{ prediction.alert.cause }}</el-descriptions-item>
+            <el-descriptions-item label="紧急解决方法" :span="2">{{ prediction.alert.emergency_solution }}</el-descriptions-item>
+            <el-descriptions-item label="预防建议" :span="2">{{ prediction.alert.prevention_advice }}</el-descriptions-item>
+          </el-descriptions>
+          <el-empty v-else description="暂无预测结果" />
         </el-card>
       </el-col>
 
-      <!-- 安全拦截事件 -->
       <el-col :span="8">
         <el-card shadow="hover" class="log-card">
           <template #header>
@@ -61,42 +69,36 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import * as echarts from 'echarts'
+import { useRouter } from 'vue-router'
 import request from '../utils/request'
 
+const router = useRouter()
+
 const summaryCards = ref([
-  { title: 'CPU 负载', value: '0.0', unit: '%', icon: 'Cpu', iconClass: 'icon-blue', trend: 0 },
-  { title: '内存使用', value: '0.0', unit: '%', icon: 'Odometer', iconClass: 'icon-green', trend: 0 },
-  { title: '磁盘使用', value: '0.0', unit: '%', icon: 'PieChart', iconClass: 'icon-purple', trend: 0 },
-  { title: '网络吞吐', value: '0.0', unit: 'MB', icon: 'Connection', iconClass: 'icon-orange', trend: 0 },
-  { title: '恶意 IP 拦截', value: '0', unit: '个', icon: 'Lock', iconClass: 'icon-red', trend: 0 },
-  { title: '异常请求拦截', value: '0', unit: '次', icon: 'Warning', iconClass: 'icon-red', trend: 0 },
+  { metricKey: 'cpu', title: 'CPU 负载', value: '0.0', unit: '%', icon: 'Cpu', iconClass: 'icon-blue', trend: 0 },
+  { metricKey: 'memory', title: '内存使用', value: '0.0', unit: '%', icon: 'Odometer', iconClass: 'icon-green', trend: 0 },
+  { metricKey: 'disk', title: '磁盘使用', value: '0.0', unit: '%', icon: 'PieChart', iconClass: 'icon-purple', trend: 0 },
+  { metricKey: 'network', title: '网络吞吐', value: '0.0', unit: 'MB', icon: 'Connection', iconClass: 'icon-orange', trend: 0 },
 ])
 
 const aiStatus = ref({ type: 'success', text: '系统平稳' })
-
+const prediction = ref({})
 const activities = ref([])
-
-const lineChartRef = ref(null)
-let chartInstance = null
 let timer = null
-
-const forecastByTrend = (series) => {
-  if (!series.length) return []
-  if (series.length === 1) return [series[0]]
-  const alpha = 0.45
-  const result = [series[0]]
-  for (let i = 1; i < series.length; i += 1) {
-    const prev = Number(result[i - 1] || 0)
-    const curr = Number(series[i] || 0)
-    result.push(Number((alpha * curr + (1 - alpha) * prev).toFixed(2)))
-  }
-  return result
-}
 
 const safeTrend = (next, prev) => {
   if (!prev || prev === 0) return 0
   return Number((((next - prev) / prev) * 100).toFixed(1))
+}
+
+const riskType = (riskLevel) => {
+  if (riskLevel === '高') return 'danger'
+  if (riskLevel === '中') return 'warning'
+  return 'success'
+}
+
+const goMetric = (metric) => {
+  router.push({ path: '/metrics/trend', query: { metric } })
 }
 
 const applyDashboardData = (data) => {
@@ -107,31 +109,16 @@ const applyDashboardData = (data) => {
   const prevMem = Number(summaryCards.value[1].value || 0)
   const prevDisk = Number(summaryCards.value[2].value || 0)
   const prevNet = Number(summaryCards.value[3].value || 0)
-  const prevBlockedIp = Number(summaryCards.value[4].value || 0)
-  const prevAbnormalBlocked = Number(summaryCards.value[5].value || 0)
-
   const cpu = Number(summary.cpu || 0)
   const memory = Number(summary.memory || 0)
   const disk = Number(summary.disk || 0)
   const network = Number(summary.network || 0)
-
-  const security = data?.security || {}
-  const blockedIpCount = Number(security.blocked_ip_count || 0)
-  const blockedRequestCount = Number(security.blocked_request_count || 0)
-  const abnormalRequestCount = Number(security.abnormal_request_count || 0)
 
   summaryCards.value = [
     { ...summaryCards.value[0], value: cpu.toFixed(1), trend: safeTrend(cpu, prevCpu) },
     { ...summaryCards.value[1], value: memory.toFixed(1), trend: safeTrend(memory, prevMem) },
     { ...summaryCards.value[2], value: disk.toFixed(1), trend: safeTrend(disk, prevDisk) },
     { ...summaryCards.value[3], value: network.toFixed(1), trend: safeTrend(network, prevNet) },
-    { ...summaryCards.value[4], value: String(blockedIpCount), trend: safeTrend(blockedIpCount, prevBlockedIp) },
-    {
-      ...summaryCards.value[5],
-      value: String(blockedRequestCount),
-      trend: safeTrend(blockedRequestCount, prevAbnormalBlocked),
-      unit: `次 / 高风险 ${abnormalRequestCount}`,
-    },
   ]
 
   const totalServers = data?.servers?.total || 0
@@ -140,18 +127,7 @@ const applyDashboardData = (data) => {
     ? { type: 'success', text: `在线 ${onlineServers}/${totalServers}` }
     : { type: 'warning', text: `在线 ${onlineServers}/${totalServers} · 风险自动拦截中` }
 
-  if (chartInstance) {
-    const cpuSeries = trend.map(x => Number(x.cpu || 0))
-    const aiForecastSeries = forecastByTrend(cpuSeries)
-    chartInstance.setOption({
-      xAxis: { data: trend.map(x => x.time) },
-      series: [
-        { name: '实时 CPU 负载', data: cpuSeries },
-        { name: 'AI 预测负载(短时)', data: aiForecastSeries },
-      ],
-    })
-  }
-
+  const security = data?.security || {}
   const blockedEvents = security?.recent_blocked_events || []
   if (blockedEvents.length) {
     activities.value = blockedEvents.map(item => ({
@@ -186,7 +162,7 @@ const fetchDashboardData = async () => {
     const [metricsRes, securityRes] = await Promise.all([
       request.get('/metrics/dashboard', {
         params: {
-          collect_now: 1,
+          collect_now: 0,
           points: 12,
         }
       }),
@@ -200,68 +176,27 @@ const fetchDashboardData = async () => {
         ...metricsRes.data,
         security: securityRes?.code === 200 ? securityRes.data : {},
       })
+
+      const firstServer = metricsRes?.data?.servers?.items?.[0]
+      if (firstServer?.id) {
+        const predictRes = await request.get(`/ai/predict-alert/${firstServer.id}`)
+        if (predictRes.code === 200) {
+          prediction.value = predictRes.data || {}
+        }
+      }
     }
   } catch (e) {
     aiStatus.value = { type: 'danger', text: '采集失败' }
   }
 }
 
-const initChart = () => {
-  if (!lineChartRef.value) return
-  chartInstance = echarts.init(lineChartRef.value)
-  
-  const option = {
-    tooltip: { trigger: 'axis' },
-    legend: { data: ['实时 CPU 负载', 'AI 预测负载(短时)'] },
-    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: {
-      type: 'category',
-      boundaryGap: false,
-      data: ['10:00', '10:05', '10:10', '10:15', '10:20', '10:25', '10:30']
-    },
-    yAxis: { type: 'value', max: 100 },
-    series: [
-      {
-        name: '实时 CPU 负载',
-        type: 'line',
-        smooth: true,
-        itemStyle: { color: '#409eff' },
-        areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(64,158,255,0.3)' },
-            { offset: 1, color: 'rgba(64,158,255,0.1)' }
-          ])
-        },
-        data: [35, 40, 42, 38, 45, 47, 45]
-      },
-      {
-        name: 'AI 预测负载(短时)',
-        type: 'line',
-        smooth: true,
-        lineStyle: { type: 'dashed' },
-        itemStyle: { color: '#e6a23c' },
-        data: [36, 41, 40, 39, 46, 49, 48]
-      }
-    ]
-  }
-  chartInstance.setOption(option)
-}
-
-const resizeHandler = () => {
-  if (chartInstance) chartInstance.resize()
-}
-
 onMounted(() => {
-  initChart()
   fetchDashboardData()
-  timer = setInterval(fetchDashboardData, 15000)
-  window.addEventListener('resize', resizeHandler)
+  timer = setInterval(fetchDashboardData, 5000)
 })
 
 onUnmounted(() => {
-  window.removeEventListener('resize', resizeHandler)
   if (timer) clearInterval(timer)
-  if (chartInstance) chartInstance.dispose()
 })
 </script>
 
@@ -272,6 +207,10 @@ onUnmounted(() => {
 
 .data-card {
   border-radius: 8px;
+}
+
+.clickable {
+  cursor: pointer;
 }
 
 .card-header {
@@ -307,11 +246,14 @@ onUnmounted(() => {
 .icon-green { color: #67c23a; font-size: 20px; }
 .icon-purple { color: #b37feb; font-size: 20px; }
 .icon-orange { color: #e6a23c; font-size: 20px; }
-.icon-red { color: #f56c6c; font-size: 20px; }
 
 .chart-card, .log-card {
   border-radius: 8px;
   height: 400px;
+}
+
+.predict-box {
+  margin-top: 6px;
 }
 
 .card-header-title {
@@ -321,8 +263,4 @@ onUnmounted(() => {
   font-weight: bold;
 }
 
-.chart-container {
-  height: 320px;
-  width: 100%;
-}
 </style>

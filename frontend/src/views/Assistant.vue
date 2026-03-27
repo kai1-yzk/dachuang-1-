@@ -4,7 +4,7 @@
       <el-col :span="8">
         <el-card shadow="hover">
           <template #header>
-            <div class="card-title">数字运维助手</div>
+            <div class="card-title">AI 辅助运维操作</div>
           </template>
 
           <el-form label-width="90px">
@@ -13,10 +13,10 @@
                 <el-option v-for="srv in servers" :key="srv.id" :label="`${srv.hostname} (${srv.ip})`" :value="srv.id" />
               </el-select>
             </el-form-item>
-            <el-form-item label="问题">
-              <el-input v-model="question" type="textarea" :rows="6" placeholder="例如：nginx 不可用，如何排查并恢复？" />
+            <el-form-item label="操作命令">
+              <el-input v-model="commandText" type="textarea" :rows="6" placeholder="例如：systemctl restart nginx" />
             </el-form-item>
-            <el-button type="primary" :loading="querying" @click="askAssistant">生成建议</el-button>
+            <el-button type="primary" :loading="planning" @click="buildPlan">生成执行方案</el-button>
           </el-form>
         </el-card>
       </el-col>
@@ -25,46 +25,39 @@
         <el-card shadow="hover">
           <template #header>
             <div class="header-bar">
-              <span class="card-title">回答与建议</span>
-              <el-tag v-if="result" :type="riskTagType(result.risk_level)">{{ result.risk_level }}</el-tag>
+              <span class="card-title">AI 方案与执行确认</span>
+              <el-tag v-if="plan" :type="riskTagType(plan.risk.level)">{{ plan.risk.level }}</el-tag>
             </div>
           </template>
 
-          <div v-if="result">
-            <el-alert type="info" :closable="false" :title="result.answer" show-icon />
+          <div v-if="plan">
+            <el-alert type="info" :closable="false" :title="plan.ask" show-icon />
 
-            <div class="section-title mt-16">建议列表</div>
-            <el-table :data="result.suggestions || []" size="small">
-              <el-table-column prop="title" label="建议" min-width="180" />
-              <el-table-column prop="risk_level" label="风险" width="90" />
-              <el-table-column prop="command" label="建议命令" min-width="180">
-                <template #default="scope">
-                  {{ scope.row.command || '-' }}
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="120">
-                <template #default="scope">
-                  <el-button
-                    size="small"
-                    type="warning"
-                    :disabled="!scope.row.requires_approval"
-                    @click="approveSuggestion(scope.row)"
-                  >
-                    审批
-                  </el-button>
-                </template>
-              </el-table-column>
-            </el-table>
+            <div class="section-title mt-16">解决方法（执行步骤）</div>
+            <el-steps direction="vertical" :active="plan.solution.steps.length">
+              <el-step v-for="(step, idx) in plan.solution.steps" :key="idx" :title="step" />
+            </el-steps>
 
-            <div class="section-title mt-16">引用证据</div>
-            <el-table :data="result.citations || []" size="small">
-              <el-table-column prop="source" label="来源" width="100" />
-              <el-table-column prop="id" label="ID" width="80" />
-              <el-table-column prop="text" label="内容" min-width="280" show-overflow-tooltip />
-            </el-table>
+            <div class="section-title mt-16">预期效果</div>
+            <el-alert type="success" :closable="false" :title="plan.solution.expected_effect" />
+
+            <div class="section-title mt-16">风险说明</div>
+            <el-descriptions :column="1" border size="small">
+              <el-descriptions-item label="风险等级">{{ plan.risk.level }}</el-descriptions-item>
+              <el-descriptions-item label="风险分值">{{ Number(plan.risk.score || 0).toFixed(2) }}</el-descriptions-item>
+              <el-descriptions-item label="风险后果">{{ plan.risk.risk_consequence }}</el-descriptions-item>
+            </el-descriptions>
+
+            <div class="mt-16 action-row">
+              <el-button type="primary" :loading="executing" @click="executeWithConsent">同意并执行</el-button>
+              <el-button @click="resetPlan">取消</el-button>
+            </div>
+
+            <div class="section-title mt-16">执行结果回显</div>
+            <el-input v-model="executionOutput" type="textarea" :rows="10" readonly />
           </div>
 
-          <el-empty v-else description="输入问题后查看助手建议" />
+          <el-empty v-else description="输入命令并生成方案后，确认是否执行" />
         </el-card>
       </el-col>
     </el-row>
@@ -73,14 +66,16 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '../utils/request'
 
 const servers = ref([])
 const serverId = ref(null)
-const question = ref('')
-const querying = ref(false)
-const result = ref(null)
+const commandText = ref('')
+const planning = ref(false)
+const executing = ref(false)
+const plan = ref(null)
+const executionOutput = ref('')
 
 const loadServers = async () => {
   const res = await request.get('/servers/')
@@ -98,30 +93,69 @@ const riskTagType = (level) => {
   return 'success'
 }
 
-const askAssistant = async () => {
-  if (!question.value.trim()) {
-    ElMessage.warning('请输入问题')
+const buildPlan = async () => {
+  if (!commandText.value.trim()) {
+    ElMessage.warning('请输入操作命令')
     return
   }
-  querying.value = true
+  if (!serverId.value) {
+    ElMessage.warning('请选择目标服务器')
+    return
+  }
+  planning.value = true
   try {
-    const res = await request.post('/assistant/query', {
-      question: question.value.trim(),
-      server_id: serverId.value || undefined,
+    const res = await request.post('/assistant/ops-plan', {
+      command: commandText.value.trim(),
+      server_id: serverId.value,
     })
     if (res.code === 200) {
-      result.value = res.data
+      plan.value = res.data
+      executionOutput.value = ''
     }
   } finally {
-    querying.value = false
+    planning.value = false
   }
 }
 
-const approveSuggestion = async (suggestion) => {
-  const res = await request.post('/assistant/suggestion/approve', { suggestion })
-  if (res.code === 200) {
-    ElMessage.success('建议已审批并记录')
+const executeWithConsent = async () => {
+  if (!plan.value?.execution_token) return
+
+  let highRiskConfirmed = false
+  if (plan.value?.risk?.is_high_risk) {
+    try {
+      await ElMessageBox.confirm(
+        `极高风险操作，可能后果：${plan.value.risk.risk_consequence}。是否继续执行？`,
+        '二次确认',
+        { type: 'error', confirmButtonText: '确认执行', cancelButtonText: '取消' }
+      )
+      highRiskConfirmed = true
+    } catch {
+      return
+    }
   }
+
+  executing.value = true
+  try {
+    const res = await request.post('/assistant/ops-execute', {
+      execution_token: plan.value.execution_token,
+      consent: true,
+      high_risk_confirmed: highRiskConfirmed,
+    })
+    if (res.code === 200) {
+      const data = res.data || {}
+      executionOutput.value = `exit_status=${data.exit_status}\n\n[stdout]\n${data.stdout || ''}\n\n[stderr]\n${data.stderr || ''}`
+      ElMessage.success('命令执行完成')
+    }
+  } catch (e) {
+    executionOutput.value = e?.response?.data?.message || '执行失败'
+  } finally {
+    executing.value = false
+  }
+}
+
+const resetPlan = () => {
+  plan.value = null
+  executionOutput.value = ''
 }
 
 onMounted(() => {
@@ -147,5 +181,10 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.action-row {
+  display: flex;
+  gap: 10px;
 }
 </style>
