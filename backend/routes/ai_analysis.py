@@ -8,10 +8,20 @@ from utils.security import validate_ai_command
 from services.command_risk_service import evaluate_risk, to_command
 from services.audit_service import write_audit_log
 from utils.db import execute_query
+from utils.security import get_request_tenant_id
 
 ai_bp = Blueprint('ai', __name__)
 
 _PREDICTOR_CACHE = None
+_SERVERS_HAS_TENANT_ID = None
+
+
+def _servers_has_tenant_id_column():
+    global _SERVERS_HAS_TENANT_ID
+    if _SERVERS_HAS_TENANT_ID is None:
+        rows = execute_query("SHOW COLUMNS FROM servers LIKE %s", ("tenant_id",))
+        _SERVERS_HAS_TENANT_ID = bool(rows)
+    return _SERVERS_HAS_TENANT_ID
 
 
 def _load_server_predictor():
@@ -19,37 +29,61 @@ def _load_server_predictor():
     if _PREDICTOR_CACHE is not None:
         return _PREDICTOR_CACHE
 
-    import os
+    import importlib.util
     import sys
     from pathlib import Path
 
     ai_engine_path = Path(__file__).resolve().parents[2] / 'ai_engine'
-    if str(ai_engine_path) not in sys.path:
-        sys.path.append(str(ai_engine_path))
+    model_module_path = ai_engine_path / 'models'
+    if str(model_module_path) not in sys.path:
+        sys.path.append(str(model_module_path))
 
     artifact = ai_engine_path / 'models' / 'server_anomaly_artifacts.pkl'
     if not artifact.exists():
         raise FileNotFoundError(f"model artifact not found: {artifact}")
 
-    from models.server_anomaly_predictor import ServerAnomalyPredictor
+    predictor_module_file = model_module_path / 'server_anomaly_predictor.py'
+    if not predictor_module_file.exists():
+        raise FileNotFoundError(f"predictor module not found: {predictor_module_file}")
+
+    spec = importlib.util.spec_from_file_location("server_anomaly_predictor", str(predictor_module_file))
+    if spec is None or spec.loader is None:
+        raise ImportError("failed to load predictor module spec")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    ServerAnomalyPredictor = getattr(module, "ServerAnomalyPredictor")
 
     _PREDICTOR_CACHE = ServerAnomalyPredictor.load(artifact)
     return _PREDICTOR_CACHE
 
 
-def _load_server_metric_series(server_id: int, limit: int = 120):
-    rows = execute_query(
-        """
-        SELECT cpu_usage, memory_usage, disk_usage,
-               (network_rx_mb + network_tx_mb) AS network_total,
-               UNIX_TIMESTAMP(created_at) AS ts
-        FROM server_metrics
-        WHERE server_id=%s
-        ORDER BY created_at DESC
-        LIMIT %s
-        """,
-        (server_id, limit),
-    )
+def _load_server_metric_series(server_id: int, tenant_id: int, limit: int = 120):
+    if _servers_has_tenant_id_column():
+        rows = execute_query(
+            """
+            SELECT cpu_usage, memory_usage, disk_usage,
+                   (network_rx_mb + network_tx_mb) AS network_total,
+                   UNIX_TIMESTAMP(created_at) AS ts
+            FROM server_metrics
+            WHERE server_id=%s AND server_id IN (SELECT id FROM servers WHERE id=%s AND tenant_id=%s)
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (server_id, server_id, tenant_id, limit),
+        )
+    else:
+        rows = execute_query(
+            """
+            SELECT cpu_usage, memory_usage, disk_usage,
+                   (network_rx_mb + network_tx_mb) AS network_total,
+                   UNIX_TIMESTAMP(created_at) AS ts
+            FROM server_metrics
+            WHERE server_id=%s
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (server_id, limit),
+        )
     if not rows:
         return None
 
@@ -81,7 +115,7 @@ def predict_anomaly():
 
     try:
         if server_id:
-            packet = _load_server_metric_series(int(server_id), limit=120)
+            packet = _load_server_metric_series(int(server_id), get_request_tenant_id(request), limit=120)
             if not packet:
                 return jsonify({"code": 404, "message": "No server metrics found"}), 404
             result = predictor.predict_multivariate(packet['series'], packet['timestamps'])
@@ -108,7 +142,7 @@ def predict_server_anomaly(server_id: int):
     """按 server_id 从 server_metrics 读取最近数据并预测异常。"""
     try:
         predictor = _load_server_predictor()
-        packet = _load_server_metric_series(server_id, limit=120)
+        packet = _load_server_metric_series(server_id, get_request_tenant_id(request), limit=120)
         if not packet:
             return jsonify({"code": 404, "message": "No server metrics found"}), 404
 

@@ -28,6 +28,18 @@ const routes = [
     name: 'Terminal',
     component: () => import('../views/Terminal.vue'),
     meta: { requiresAuth: true }
+  },
+  {
+    path: '/tenants',
+    name: 'Tenants',
+    component: () => import('../views/Tenants.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/assistant',
+    name: 'Assistant',
+    component: () => import('../views/Assistant.vue'),
+    meta: { requiresAuth: true }
   }
 ]
 

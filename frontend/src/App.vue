@@ -20,6 +20,14 @@
           <el-icon><Monitor /></el-icon>
           <span>AI 智能终端</span>
         </el-menu-item>
+        <el-menu-item index="/tenants">
+          <el-icon><OfficeBuilding /></el-icon>
+          <span>多租户管理</span>
+        </el-menu-item>
+        <el-menu-item index="/assistant">
+          <el-icon><ChatDotRound /></el-icon>
+          <span>数字运维助手</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
     
@@ -30,6 +38,9 @@
           <span class="title">轻量化 AI 服务器运维防护系统</span>
         </div>
         <div class="header-right">
+          <el-tag v-if="tenantContext" size="small" type="info" class="tenant-tag">
+            租户 #{{ tenantContext.tenant_id }} / {{ tenantContext.role }}
+          </el-tag>
           <el-dropdown>
             <span class="el-dropdown-link user-info">
               <el-avatar size="small" icon="UserFilled" />
@@ -64,12 +75,13 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import request from './utils/request'
 
 const route = useRoute()
 const router = useRouter()
+const tenantContext = ref(null)
 
 const isBlankLayout = computed(() => route.meta.layout === 'blank')
 
@@ -84,6 +96,21 @@ const handleLogout = async () => {
     router.push('/login')
   }
 }
+
+const loadTenantContext = async () => {
+  try {
+    const res = await request.get('/tenants/context')
+    if (res.code === 200) {
+      tenantContext.value = res.data
+    }
+  } catch {
+    tenantContext.value = null
+  }
+}
+
+onMounted(() => {
+  loadTenantContext()
+})
 </script>
 
 <style>
@@ -159,6 +186,10 @@ html, body, #app {
   gap: 8px;
   cursor: pointer;
   color: #606266;
+}
+
+.tenant-tag {
+  margin-right: 12px;
 }
 
 .main-content {

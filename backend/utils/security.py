@@ -47,7 +47,9 @@ def rbac_middleware(req, secret_key):
     try:
         payload = jwt.decode(token, secret_key, algorithms=["HS256"])
         payload.setdefault("role", "operator")
+        payload.setdefault("tenant_id", 1)
         req.user = payload  # 将用户信息挂载到 request 上
+        req.tenant_id = int(payload.get("tenant_id") or 1)
     except jwt.ExpiredSignatureError:
         return jsonify({"code": 401, "message": "Token expired"}), 401
     except jwt.InvalidTokenError:
@@ -91,3 +93,18 @@ def validate_ai_command(command):
 
 def generate_short_code() -> str:
     return f"{secrets.randbelow(10**6):06d}"
+
+
+def get_request_tenant_id(req) -> int:
+    if hasattr(req, "tenant_id"):
+        return int(getattr(req, "tenant_id") or 1)
+    if hasattr(req, "user"):
+        return int(getattr(req, "user", {}).get("tenant_id") or 1)
+    return 1
+
+
+def ensure_role(req, allowed_roles):
+    role = getattr(req, "user", {}).get("role", "operator") if hasattr(req, "user") else "operator"
+    if role not in allowed_roles:
+        return jsonify({"code": 403, "message": "Forbidden: insufficient role", "data": None}), 403
+    return None

@@ -5,8 +5,19 @@ from flask import Blueprint, jsonify, request
 from services.agent_service import list_servers
 from services.ssh_service import run_command_stream, validate_server_ssh_config
 from utils.db import execute_query, execute_update
+from utils.security import get_request_tenant_id
 
 servers_bp = Blueprint("servers", __name__)
+
+_SERVERS_HAS_TENANT_ID = None
+
+
+def _servers_has_tenant_id_column():
+    global _SERVERS_HAS_TENANT_ID
+    if _SERVERS_HAS_TENANT_ID is None:
+        rows = execute_query("SHOW COLUMNS FROM servers LIKE %s", ("tenant_id",))
+        _SERVERS_HAS_TENANT_ID = bool(rows)
+    return _SERVERS_HAS_TENANT_ID
 
 
 def _normalize_server_payload(payload):
@@ -48,11 +59,19 @@ def _validate_ssh_payload(data):
 
 @servers_bp.route("/", methods=["GET"])
 def list_all():
+    tenant_id = get_request_tenant_id(request)
+    if _servers_has_tenant_id_column():
+        rows = execute_query(
+            "SELECT id, hostname, ip, port, protocol, status, last_seen, created_at, updated_at FROM servers WHERE tenant_id=%s ORDER BY updated_at DESC",
+            (tenant_id,),
+        )
+        return jsonify({"code": 200, "message": "ok", "data": rows})
     return jsonify({"code": 200, "message": "ok", "data": list_servers()})
 
 
 @servers_bp.route("/", methods=["POST"])
 def create_or_update_ssh_server():
+    tenant_id = get_request_tenant_id(request)
     payload = request.get_json(silent=True) or {}
     data = _normalize_server_payload(payload)
     error = _validate_ssh_payload(data)
@@ -69,7 +88,10 @@ def create_or_update_ssh_server():
     auth_data_json = json.dumps(auth_data, ensure_ascii=False)
 
     hostname = data["hostname"] or data["ip"]
-    existing = execute_query("SELECT id FROM servers WHERE ip=%s AND port=%s LIMIT 1", (data["ip"], data["port"]))
+    if _servers_has_tenant_id_column():
+        existing = execute_query("SELECT id FROM servers WHERE ip=%s AND port=%s AND tenant_id=%s LIMIT 1", (data["ip"], data["port"], tenant_id))
+    else:
+        existing = execute_query("SELECT id FROM servers WHERE ip=%s AND port=%s LIMIT 1", (data["ip"], data["port"]))
     if existing:
         server_id = existing[0]["id"]
         execute_update(
@@ -83,15 +105,26 @@ def create_or_update_ssh_server():
         )
         message = "server updated"
     else:
-        execute_update(
-            """
-            INSERT INTO servers
-            (hostname, ip, port, protocol, auth_type, auth_data, ssh_username, connect_timeout, is_enabled, status, created_at, updated_at)
-            VALUES (%s, %s, %s, 'ssh', %s, %s, %s, %s, 1, 'offline', NOW(), NOW())
-            """,
-            (hostname, data["ip"], data["port"], data["auth_type"], auth_data_json, data["ssh_username"], data["connect_timeout"]),
-        )
-        created = execute_query("SELECT id FROM servers WHERE ip=%s AND port=%s ORDER BY id DESC LIMIT 1", (data["ip"], data["port"]))
+        if _servers_has_tenant_id_column():
+            execute_update(
+                """
+                INSERT INTO servers
+                (tenant_id, hostname, ip, port, protocol, auth_type, auth_data, ssh_username, connect_timeout, is_enabled, status, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, 'ssh', %s, %s, %s, %s, 1, 'offline', NOW(), NOW())
+                """,
+                (tenant_id, hostname, data["ip"], data["port"], data["auth_type"], auth_data_json, data["ssh_username"], data["connect_timeout"]),
+            )
+            created = execute_query("SELECT id FROM servers WHERE ip=%s AND port=%s AND tenant_id=%s ORDER BY id DESC LIMIT 1", (data["ip"], data["port"], tenant_id))
+        else:
+            execute_update(
+                """
+                INSERT INTO servers
+                (hostname, ip, port, protocol, auth_type, auth_data, ssh_username, connect_timeout, is_enabled, status, created_at, updated_at)
+                VALUES (%s, %s, %s, 'ssh', %s, %s, %s, %s, 1, 'offline', NOW(), NOW())
+                """,
+                (hostname, data["ip"], data["port"], data["auth_type"], auth_data_json, data["ssh_username"], data["connect_timeout"]),
+            )
+            created = execute_query("SELECT id FROM servers WHERE ip=%s AND port=%s ORDER BY id DESC LIMIT 1", (data["ip"], data["port"]))
         server_id = created[0]["id"] if created else None
         message = "server created"
 
@@ -113,18 +146,33 @@ def create_or_update_ssh_server():
 
 @servers_bp.route("/<int:server_id>", methods=["GET"])
 def detail(server_id: int):
-    rows = execute_query(
-        """
-        SELECT s.id, s.hostname, s.ip, s.port, s.protocol, s.status, s.last_seen,
-               m.cpu_usage, m.memory_usage, m.disk_usage, m.network_rx_mb, m.network_tx_mb, m.created_at
-        FROM servers s
-        LEFT JOIN server_metrics m ON m.server_id = s.id
-        WHERE s.id = %s
-        ORDER BY m.id DESC
-        LIMIT 30
-        """,
-        (server_id,),
-    )
+    tenant_id = get_request_tenant_id(request)
+    if _servers_has_tenant_id_column():
+        rows = execute_query(
+            """
+            SELECT s.id, s.hostname, s.ip, s.port, s.protocol, s.status, s.last_seen,
+                   m.cpu_usage, m.memory_usage, m.disk_usage, m.network_rx_mb, m.network_tx_mb, m.created_at
+            FROM servers s
+            LEFT JOIN server_metrics m ON m.server_id = s.id
+            WHERE s.id = %s AND s.tenant_id=%s
+            ORDER BY m.id DESC
+            LIMIT 30
+            """,
+            (server_id, tenant_id),
+        )
+    else:
+        rows = execute_query(
+            """
+            SELECT s.id, s.hostname, s.ip, s.port, s.protocol, s.status, s.last_seen,
+                   m.cpu_usage, m.memory_usage, m.disk_usage, m.network_rx_mb, m.network_tx_mb, m.created_at
+            FROM servers s
+            LEFT JOIN server_metrics m ON m.server_id = s.id
+            WHERE s.id = %s
+            ORDER BY m.id DESC
+            LIMIT 30
+            """,
+            (server_id,),
+        )
     if not rows:
         return jsonify({"code": 404, "message": "server not found", "data": None}), 404
     return jsonify({"code": 200, "message": "ok", "data": rows})
@@ -132,6 +180,7 @@ def detail(server_id: int):
 
 @servers_bp.route("/<int:server_id>/ssh-config", methods=["PUT"])
 def update_ssh_config(server_id: int):
+    tenant_id = get_request_tenant_id(request)
     payload = request.get_json(silent=True) or {}
     auth_type = (payload.get("auth_type") or "password").lower()
     ssh_username = (payload.get("ssh_username") or "").strip()
@@ -149,7 +198,10 @@ def update_ssh_config(server_id: int):
     if auth_type == "key" and not private_key:
         return jsonify({"code": 400, "message": "private_key is required for key auth", "data": None}), 400
 
-    server = execute_query("SELECT id FROM servers WHERE id=%s LIMIT 1", (server_id,))
+    if _servers_has_tenant_id_column():
+        server = execute_query("SELECT id FROM servers WHERE id=%s AND tenant_id=%s LIMIT 1", (server_id, tenant_id))
+    else:
+        server = execute_query("SELECT id FROM servers WHERE id=%s LIMIT 1", (server_id,))
     if not server:
         return jsonify({"code": 404, "message": "server not found", "data": None}), 404
 
@@ -197,6 +249,11 @@ def update_ssh_config(server_id: int):
 
 @servers_bp.route("/<int:server_id>/ssh-test", methods=["POST"])
 def test_ssh_connection(server_id: int):
+    tenant_id = get_request_tenant_id(request)
+    if _servers_has_tenant_id_column():
+        owns = execute_query("SELECT id FROM servers WHERE id=%s AND tenant_id=%s LIMIT 1", (server_id, tenant_id))
+        if not owns:
+            return jsonify({"code": 404, "message": "server not found", "data": None}), 404
     check = validate_server_ssh_config(server_id)
     if not check.get("ok"):
         return jsonify({"code": 400, "message": check.get("message", "invalid ssh config"), "data": None}), 400

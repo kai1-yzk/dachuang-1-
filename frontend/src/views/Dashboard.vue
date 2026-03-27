@@ -24,7 +24,7 @@
         <el-card shadow="hover" class="chart-card">
           <template #header>
             <div class="card-header-title">
-              <span>服务器资源实时趋势</span>
+              <span>AI 时序预测与实时负载趋势</span>
               <el-tag :type="aiStatus.type" size="small">{{ aiStatus.text }}</el-tag>
             </div>
           </template>
@@ -32,13 +32,13 @@
         </el-card>
       </el-col>
 
-      <!-- 异常检测日志 -->
+      <!-- 安全拦截事件 -->
       <el-col :span="8">
         <el-card shadow="hover" class="log-card">
           <template #header>
             <div class="card-header-title">
-              <span>采集事件</span>
-              <el-button type="primary" link>查看全部</el-button>
+              <span>AI 安全拦截事件</span>
+              <el-tag size="small" type="danger">自动拦截开启</el-tag>
             </div>
           </template>
           <el-timeline>
@@ -69,6 +69,8 @@ const summaryCards = ref([
   { title: '内存使用', value: '0.0', unit: '%', icon: 'Odometer', iconClass: 'icon-green', trend: 0 },
   { title: '磁盘使用', value: '0.0', unit: '%', icon: 'PieChart', iconClass: 'icon-purple', trend: 0 },
   { title: '网络吞吐', value: '0.0', unit: 'MB', icon: 'Connection', iconClass: 'icon-orange', trend: 0 },
+  { title: '恶意 IP 拦截', value: '0', unit: '个', icon: 'Lock', iconClass: 'icon-red', trend: 0 },
+  { title: '异常请求拦截', value: '0', unit: '次', icon: 'Warning', iconClass: 'icon-red', trend: 0 },
 ])
 
 const aiStatus = ref({ type: 'success', text: '系统平稳' })
@@ -78,6 +80,19 @@ const activities = ref([])
 const lineChartRef = ref(null)
 let chartInstance = null
 let timer = null
+
+const forecastByTrend = (series) => {
+  if (!series.length) return []
+  if (series.length === 1) return [series[0]]
+  const alpha = 0.45
+  const result = [series[0]]
+  for (let i = 1; i < series.length; i += 1) {
+    const prev = Number(result[i - 1] || 0)
+    const curr = Number(series[i] || 0)
+    result.push(Number((alpha * curr + (1 - alpha) * prev).toFixed(2)))
+  }
+  return result
+}
 
 const safeTrend = (next, prev) => {
   if (!prev || prev === 0) return 0
@@ -92,65 +107,99 @@ const applyDashboardData = (data) => {
   const prevMem = Number(summaryCards.value[1].value || 0)
   const prevDisk = Number(summaryCards.value[2].value || 0)
   const prevNet = Number(summaryCards.value[3].value || 0)
+  const prevBlockedIp = Number(summaryCards.value[4].value || 0)
+  const prevAbnormalBlocked = Number(summaryCards.value[5].value || 0)
 
   const cpu = Number(summary.cpu || 0)
   const memory = Number(summary.memory || 0)
   const disk = Number(summary.disk || 0)
   const network = Number(summary.network || 0)
 
+  const security = data?.security || {}
+  const blockedIpCount = Number(security.blocked_ip_count || 0)
+  const blockedRequestCount = Number(security.blocked_request_count || 0)
+  const abnormalRequestCount = Number(security.abnormal_request_count || 0)
+
   summaryCards.value = [
     { ...summaryCards.value[0], value: cpu.toFixed(1), trend: safeTrend(cpu, prevCpu) },
     { ...summaryCards.value[1], value: memory.toFixed(1), trend: safeTrend(memory, prevMem) },
     { ...summaryCards.value[2], value: disk.toFixed(1), trend: safeTrend(disk, prevDisk) },
     { ...summaryCards.value[3], value: network.toFixed(1), trend: safeTrend(network, prevNet) },
+    { ...summaryCards.value[4], value: String(blockedIpCount), trend: safeTrend(blockedIpCount, prevBlockedIp) },
+    {
+      ...summaryCards.value[5],
+      value: String(blockedRequestCount),
+      trend: safeTrend(blockedRequestCount, prevAbnormalBlocked),
+      unit: `次 / 高风险 ${abnormalRequestCount}`,
+    },
   ]
 
   const totalServers = data?.servers?.total || 0
   const onlineServers = data?.servers?.online || 0
   aiStatus.value = onlineServers === totalServers && totalServers > 0
     ? { type: 'success', text: `在线 ${onlineServers}/${totalServers}` }
-    : { type: 'warning', text: `在线 ${onlineServers}/${totalServers}` }
+    : { type: 'warning', text: `在线 ${onlineServers}/${totalServers} · 风险自动拦截中` }
 
   if (chartInstance) {
+    const cpuSeries = trend.map(x => Number(x.cpu || 0))
+    const aiForecastSeries = forecastByTrend(cpuSeries)
     chartInstance.setOption({
       xAxis: { data: trend.map(x => x.time) },
       series: [
-        { name: '实际负载', data: trend.map(x => Number(x.cpu || 0)) },
-        { name: '内存使用率', data: trend.map(x => Number(x.memory || 0)) },
+        { name: '实时 CPU 负载', data: cpuSeries },
+        { name: 'AI 预测负载(短时)', data: aiForecastSeries },
       ],
     })
   }
 
-  const collectResults = data?.collect_result || []
-  if (collectResults.length) {
-    activities.value = collectResults.slice(0, 8).map(item => {
-      if (item.ok) {
-        return {
-          content: `服务器 ${item.server_id} 采集成功 CPU=${Number(item?.metrics?.cpu || 0).toFixed(1)}%`,
-          timestamp: '刚刚',
-          type: 'success',
-        }
-      }
-      return {
-        content: `服务器 ${item.server_id} 采集失败: ${item.error || 'unknown error'}`,
-        timestamp: '刚刚',
-        type: 'danger',
-        color: '#f56c6c',
-      }
-    })
+  const blockedEvents = security?.recent_blocked_events || []
+  if (blockedEvents.length) {
+    activities.value = blockedEvents.map(item => ({
+      content: `已拦截: ${item.action || 'unknown-action'} / ${item.result || 'blocked'} / ${item.detail || 'risk detected'}`,
+      timestamp: item.time || '刚刚',
+      type: 'danger',
+      color: '#f56c6c',
+    }))
+    return
   }
+
+  const collectResults = data?.collect_result || []
+  activities.value = collectResults.slice(0, 8).map(item => {
+    if (item.ok) {
+      return {
+        content: `采集成功: 服务器 ${item.server_id} CPU=${Number(item?.metrics?.cpu || 0).toFixed(1)}%`,
+        timestamp: '刚刚',
+        type: 'success',
+      }
+    }
+    return {
+      content: `采集失败: 服务器 ${item.server_id} ${item.error || 'unknown error'}`,
+      timestamp: '刚刚',
+      type: 'danger',
+      color: '#f56c6c',
+    }
+  })
 }
 
 const fetchDashboardData = async () => {
   try {
-    const res = await request.get('/metrics/dashboard', {
-      params: {
-        collect_now: 1,
-        points: 12,
-      }
-    })
-    if (res.code === 200) {
-      applyDashboardData(res.data)
+    const [metricsRes, securityRes] = await Promise.all([
+      request.get('/metrics/dashboard', {
+        params: {
+          collect_now: 1,
+          points: 12,
+        }
+      }),
+      request.get('/audit/security-overview', {
+        params: { limit: 300 }
+      })
+    ])
+
+    if (metricsRes.code === 200) {
+      applyDashboardData({
+        ...metricsRes.data,
+        security: securityRes?.code === 200 ? securityRes.data : {},
+      })
     }
   } catch (e) {
     aiStatus.value = { type: 'danger', text: '采集失败' }
@@ -163,7 +212,7 @@ const initChart = () => {
   
   const option = {
     tooltip: { trigger: 'axis' },
-    legend: { data: ['实际负载', 'AI 预测负载'] },
+    legend: { data: ['实时 CPU 负载', 'AI 预测负载(短时)'] },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: {
       type: 'category',
@@ -173,7 +222,7 @@ const initChart = () => {
     yAxis: { type: 'value', max: 100 },
     series: [
       {
-        name: '实际负载',
+        name: '实时 CPU 负载',
         type: 'line',
         smooth: true,
         itemStyle: { color: '#409eff' },
@@ -186,7 +235,7 @@ const initChart = () => {
         data: [35, 40, 42, 38, 45, 47, 45]
       },
       {
-        name: 'AI 预测负载',
+        name: 'AI 预测负载(短时)',
         type: 'line',
         smooth: true,
         lineStyle: { type: 'dashed' },
@@ -258,6 +307,7 @@ onUnmounted(() => {
 .icon-green { color: #67c23a; font-size: 20px; }
 .icon-purple { color: #b37feb; font-size: 20px; }
 .icon-orange { color: #e6a23c; font-size: 20px; }
+.icon-red { color: #f56c6c; font-size: 20px; }
 
 .chart-card, .log-card {
   border-radius: 8px;

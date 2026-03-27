@@ -17,6 +17,7 @@ auth_bp = Blueprint('auth', __name__)
 logger = logging.getLogger(__name__)
 
 _USER_HAS_ROLE_NAME = None
+_USER_HAS_TENANT_ID = None
 
 
 def _user_has_role_name_column():
@@ -26,6 +27,14 @@ def _user_has_role_name_column():
         rows = execute_query("SHOW COLUMNS FROM user LIKE %s", ('role_name',))
         _USER_HAS_ROLE_NAME = bool(rows)
     return _USER_HAS_ROLE_NAME
+
+
+def _user_has_tenant_id_column():
+    global _USER_HAS_TENANT_ID
+    if _USER_HAS_TENANT_ID is None:
+        rows = execute_query("SHOW COLUMNS FROM user LIKE %s", ('tenant_id',))
+        _USER_HAS_TENANT_ID = bool(rows)
+    return _USER_HAS_TENANT_ID
 
 def validate_password(password):
     """密码复杂度校验：至少8位，包含大小写字母、数字和特殊字符"""
@@ -52,6 +61,7 @@ def register():
         username = data.get('username')
         email = data.get('email')
         password = data.get('password')
+        tenant_id = int(data.get('tenant_id') or 1)
 
         if not all([username, email, password]):
             return jsonify({"code": 400, "message": "Missing required fields"}), 400
@@ -74,9 +84,15 @@ def register():
         password_hash = bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
         # 插入数据库
-        if _user_has_role_name_column():
+        if _user_has_role_name_column() and _user_has_tenant_id_column():
+            sql = "INSERT INTO user (username, email, password_hash, role_name, tenant_id) VALUES (%s, %s, %s, %s, %s)"
+            params = (username, email, password_hash, 'operator', tenant_id)
+        elif _user_has_role_name_column():
             sql = "INSERT INTO user (username, email, password_hash, role_name) VALUES (%s, %s, %s, %s)"
             params = (username, email, password_hash, 'operator')
+        elif _user_has_tenant_id_column():
+            sql = "INSERT INTO user (username, email, password_hash, tenant_id) VALUES (%s, %s, %s, %s)"
+            params = (username, email, password_hash, tenant_id)
         else:
             sql = "INSERT INTO user (username, email, password_hash) VALUES (%s, %s, %s)"
             params = (username, email, password_hash)
@@ -110,8 +126,12 @@ def login():
     if not all([username, password]):
         return jsonify({"code": 400, "message": "Missing username or password"}), 400
         
-    if _user_has_role_name_column():
+    if _user_has_role_name_column() and _user_has_tenant_id_column():
+        users = execute_query("SELECT id, username, password_hash, role_name, tenant_id FROM user WHERE username=%s", (username,))
+    elif _user_has_role_name_column():
         users = execute_query("SELECT id, username, password_hash, role_name FROM user WHERE username=%s", (username,))
+    elif _user_has_tenant_id_column():
+        users = execute_query("SELECT id, username, password_hash, tenant_id FROM user WHERE username=%s", (username,))
     else:
         users = execute_query("SELECT id, username, password_hash FROM user WHERE username=%s", (username,))
     if not users:
@@ -133,6 +153,7 @@ def login():
         'user_id': user['id'],
         'username': user['username'],
         'role': user.get('role_name') or 'operator',
+        'tenant_id': int(user.get('tenant_id') or 1),
         'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=15)
     }
     access_token = jwt.encode(access_payload, secret_key, algorithm='HS256')
@@ -157,7 +178,8 @@ def login():
             "user_info": {
                 "id": user['id'],
                 "username": user['username'],
-                "role": user.get('role_name') or 'operator'
+                "role": user.get('role_name') or 'operator',
+                "tenant_id": int(user.get('tenant_id') or 1),
             }
         }
     })
@@ -179,8 +201,12 @@ def refresh():
         user_id = payload['user_id']
         
         # 验证数据库中是否匹配 (防止token被主动吊销)
-        if _user_has_role_name_column():
+        if _user_has_role_name_column() and _user_has_tenant_id_column():
+            users = execute_query("SELECT refresh_token, username, role_name, tenant_id FROM user WHERE id=%s", (user_id,))
+        elif _user_has_role_name_column():
             users = execute_query("SELECT refresh_token, username, role_name FROM user WHERE id=%s", (user_id,))
+        elif _user_has_tenant_id_column():
+            users = execute_query("SELECT refresh_token, username, tenant_id FROM user WHERE id=%s", (user_id,))
         else:
             users = execute_query("SELECT refresh_token, username FROM user WHERE id=%s", (user_id,))
         if not users or users[0]['refresh_token'] != refresh_token:
@@ -191,6 +217,7 @@ def refresh():
             'user_id': user_id,
             'username': users[0]['username'],
             'role': users[0].get('role_name') or 'operator',
+            'tenant_id': int(users[0].get('tenant_id') or 1),
             'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=15)
         }
         access_token = jwt.encode(access_payload, secret_key, algorithm='HS256')
