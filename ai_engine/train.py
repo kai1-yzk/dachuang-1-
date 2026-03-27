@@ -1,108 +1,168 @@
 """
-AI 模型训练脚本
-功能: 读取 GAIA 数据集，训练 Isolation Forest 和 LSTM 融合模型，并保存模型权重
+训练服务器异常预测模型（落地版）
+- 数据源：GAIA metric_detection 下带 label 的 CSV
+- 产物：ai_engine/models/server_anomaly_artifacts.pkl
 """
-import os
-import pandas as pd
-import numpy as np
-import torch
-from torch.utils.data import DataLoader, TensorDataset
+
+import argparse
+import json
 import pickle
-from models.fusion_model import AIOpsFusionModel
-import logging
+from pathlib import Path
+from typing import List, Tuple
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import IsolationForest, RandomForestClassifier
+from sklearn.metrics import f1_score, precision_recall_curve, precision_score, recall_score
 
-# 数据集路径
-DATA_DIR = r"C:\Users\熊二\Desktop\大创\ai_engine\data\GAIA-DataSet-main（智能运维数据集）\metric_detection\linear_data"
-MODEL_SAVE_DIR = r"C:\Users\熊二\Desktop\大创\ai_engine\models"
+from models.server_anomaly_predictor import FEATURE_COLUMNS, build_feature_frame
 
-def load_data():
-    """读取并预处理数据集"""
-    logger.info("Loading dataset...")
-    all_values = []
-    all_labels = []
-    
-    # 读取前 5 个 csv 文件作为训练集示例
-    files = [f for f in os.listdir(DATA_DIR) if f.endswith('.csv')][:5]
-    
-    for file in files:
-        file_path = os.path.join(DATA_DIR, file)
-        df = pd.read_csv(file_path)
-        
-        # 处理缺失值
-        df['value'] = df['value'].fillna(method='ffill').fillna(method='bfill')
-        
-        # 标准化 (Z-score)
-        val = df['value'].values
-        val = (val - np.mean(val)) / (np.std(val) + 1e-8)
-        
-        all_values.extend(val)
-        if 'label' in df.columns:
-            all_labels.extend(df['label'].values)
-            
-    all_values = np.array(all_values, dtype=np.float32)
-    return all_values
 
-def create_sequences(data, seq_length=10):
-    """创建时间序列数据用于 LSTM 训练"""
-    xs = []
-    ys = []
-    for i in range(len(data) - seq_length):
-        x = data[i:(i + seq_length)]
-        y = data[i + seq_length]
-        xs.append(x)
-        ys.append(y)
-    return np.array(xs), np.array(ys)
+def load_metric_files(data_root: Path) -> List[Path]:
+    files = sorted(data_root.glob("**/metric_detection/**/*.csv"))
+    return [f for f in files if f.is_file()]
+
+
+def file_to_xy(file_path: Path) -> Tuple[np.ndarray, np.ndarray]:
+    df = pd.read_csv(file_path)
+    if not {"timestamp", "value", "label"}.issubset(set(df.columns)):
+        return np.empty((0, len(FEATURE_COLUMNS))), np.empty((0,))
+
+    df = df[["timestamp", "value", "label"]].dropna()
+    if len(df) < 20:
+        return np.empty((0, len(FEATURE_COLUMNS))), np.empty((0,))
+
+    feat_df = build_feature_frame(df)
+    x = feat_df[FEATURE_COLUMNS].to_numpy(dtype=np.float64)
+    y = (feat_df["label"].to_numpy(dtype=np.float64) > 0).astype(np.int32)
+    return x, y
+
+
+def balanced_sample(x: np.ndarray, y: np.ndarray, max_normal_ratio: int = 8, random_state: int = 42):
+    rng = np.random.default_rng(random_state)
+    pos_idx = np.where(y == 1)[0]
+    neg_idx = np.where(y == 0)[0]
+    if len(pos_idx) == 0 or len(neg_idx) == 0:
+        return x, y
+
+    keep_neg = min(len(neg_idx), len(pos_idx) * max_normal_ratio)
+    sampled_neg = rng.choice(neg_idx, size=keep_neg, replace=False)
+    idx = np.concatenate([pos_idx, sampled_neg])
+    rng.shuffle(idx)
+    return x[idx], y[idx]
+
+
+def choose_threshold(y_true: np.ndarray, y_prob: np.ndarray) -> float:
+    precision, recall, thresholds = precision_recall_curve(y_true, y_prob)
+    if len(thresholds) == 0:
+        return 0.5
+    f1 = 2 * precision[:-1] * recall[:-1] / (precision[:-1] + recall[:-1] + 1e-8)
+    best_idx = int(np.argmax(f1))
+    return max(float(thresholds[best_idx]), 0.08)
+
 
 def main():
-    os.makedirs(MODEL_SAVE_DIR, exist_ok=True)
-    
-    # 1. 加载数据
-    data = load_data()
-    if len(data) == 0:
-        logger.error("No data found!")
-        return
-        
-    # 我们使用单变量数据，特征维度为 1
-    input_features = 1
-    fusion_model = AIOpsFusionModel(input_features=input_features)
-    
-    # 2. 训练 Isolation Forest (使用 reshape 转换为 2D 数组)
-    X_train_iso = data.reshape(-1, 1)
-    fusion_model.train_isolation_forest(X_train_iso)
-    
-    # 3. 训练 LSTM
-    seq_length = 10
-    X_seq, y_seq = create_sequences(data, seq_length)
-    
-    # 转换形状为 (batch_size, seq_length, input_features)
-    X_seq = X_seq.reshape(-1, seq_length, input_features)
-    y_seq = y_seq.reshape(-1, 1)
-    
-    tensor_x = torch.tensor(X_seq)
-    tensor_y = torch.tensor(y_seq)
-    
-    dataset = TensorDataset(tensor_x, tensor_y)
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
-    
-    fusion_model.train_lstm(dataloader, epochs=5, lr=0.005)  # 为了演示，设置 epoch=5
-    
-    # 4. 执行轻量化优化 (剪枝 + 量化)
-    fusion_model.apply_lightweight_optimization()
-    
-    # 5. 保存模型
-    # 保存 Isolation Forest
-    iso_model_path = os.path.join(MODEL_SAVE_DIR, "isolation_forest.pkl")
-    with open(iso_model_path, 'wb') as f:
-        pickle.dump(fusion_model.iso_forest, f)
-        
-    # 保存 LSTM (保存 state_dict)
-    lstm_model_path = os.path.join(MODEL_SAVE_DIR, "lstm_quantized.pth")
-    torch.save(fusion_model.lstm_model.state_dict(), lstm_model_path)
-    
-    logger.info(f"Models saved to {MODEL_SAVE_DIR}")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data-root", default=str(Path(__file__).resolve().parent / "data"))
+    parser.add_argument("--max-files", type=int, default=180)
+    parser.add_argument("--output", default=str(Path(__file__).resolve().parent / "models" / "server_anomaly_artifacts.pkl"))
+    args = parser.parse_args()
+
+    data_root = Path(args.data_root)
+    files = load_metric_files(data_root)
+    if not files:
+        raise RuntimeError(f"No data files found under: {data_root}")
+
+    files = files[: args.max_files]
+    split = max(1, int(len(files) * 0.8))
+    train_files = files[:split]
+    val_files = files[split:]
+    if not val_files:
+        val_files = train_files[-max(1, len(train_files) // 5):]
+
+    x_train_list, y_train_list = [], []
+    for fp in train_files:
+        x, y = file_to_xy(fp)
+        if len(y) > 0:
+            x_train_list.append(x)
+            y_train_list.append(y)
+
+    x_val_list, y_val_list = [], []
+    for fp in val_files:
+        x, y = file_to_xy(fp)
+        if len(y) > 0:
+            x_val_list.append(x)
+            y_val_list.append(y)
+
+    if not x_train_list or not x_val_list:
+        raise RuntimeError("Insufficient labeled data after parsing")
+
+    x_train = np.vstack(x_train_list)
+    y_train = np.concatenate(y_train_list)
+    x_val = np.vstack(x_val_list)
+    y_val = np.concatenate(y_val_list)
+
+    x_train, y_train = balanced_sample(x_train, y_train, max_normal_ratio=8)
+
+    clf = RandomForestClassifier(
+        n_estimators=220,
+        max_depth=18,
+        min_samples_leaf=2,
+        class_weight="balanced_subsample",
+        random_state=42,
+        n_jobs=-1,
+    )
+    clf.fit(x_train, y_train)
+
+    contamination = max(0.001, min(0.08, float(np.mean(y_train))))
+    iso = IsolationForest(
+        n_estimators=160,
+        contamination=contamination,
+        random_state=42,
+        n_jobs=-1,
+    )
+    iso.fit(x_train)
+
+    y_prob = clf.predict_proba(x_val)[:, 1]
+    threshold = choose_threshold(y_val, y_prob)
+    y_pred = (y_prob >= threshold).astype(np.int32)
+
+    metrics = {
+        "files_total": len(files),
+        "files_train": len(train_files),
+        "files_val": len(val_files),
+        "train_rows": int(len(y_train)),
+        "val_rows": int(len(y_val)),
+        "positive_rate_train": float(np.mean(y_train)),
+        "positive_rate_val": float(np.mean(y_val)),
+        "threshold": float(threshold),
+        "f1": float(f1_score(y_val, y_pred, zero_division=0)),
+        "precision": float(precision_score(y_val, y_pred, zero_division=0)),
+        "recall": float(recall_score(y_val, y_pred, zero_division=0)),
+    }
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "wb") as f:
+        pickle.dump(
+            {
+                "model": clf,
+                "iso_model": iso,
+                "threshold": float(threshold),
+                "feature_columns": FEATURE_COLUMNS,
+                "metrics": metrics,
+            },
+            f,
+        )
+
+    summary_path = output_path.with_suffix(".json")
+    summary_path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    print("Training done")
+    print(json.dumps(metrics, ensure_ascii=False, indent=2))
+    print(f"Saved model: {output_path}")
+    print(f"Saved report: {summary_path}")
+
 
 if __name__ == "__main__":
     main()

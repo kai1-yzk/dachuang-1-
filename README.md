@@ -84,6 +84,17 @@ pip install -r requirements.txt
 python agent_client.py
 ```
 
+### 5.6 训练服务器异常预测模型
+
+```bash
+cd ai_engine
+python train.py --max-files 120
+```
+
+训练完成后会生成：
+- `ai_engine/models/server_anomaly_artifacts.pkl`
+- `ai_engine/models/server_anomaly_artifacts.json`
+
 ## 6. API 与 WebSocket
 
 ### 6.1 认证与会话
@@ -148,6 +159,11 @@ python agent_client.py
 - `terminal_timeout`
 - `terminal_error`
 
+### 6.5 AI 异常预测
+
+- `POST /api/ai/predict`：支持传 `server_id`（基于 `server_metrics` 预测）或传 `values`（单序列预测）
+- `GET /api/ai/predict/server/{id}`：按服务器 ID 读取最近指标并预测
+
 ## 7. 安全设计
 
 - JWT 身份校验 + 角色字段（`operator`/`superadmin`）。
@@ -167,6 +183,7 @@ python agent_client.py
 
 - 部署指南：`docs/DEPLOYMENT.md`
 - 操作手册：`docs/OPERATION_MANUAL.md`
+- 功能规划：`docs/FEATURE_ROADMAP_NEXT.md`
 - 功能规格：`Project_Functional_Specification.md`
 
 ## 10. 注意事项

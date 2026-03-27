@@ -1,0 +1,13 @@
+{
+  "files_total": 120,
+  "files_train": 96,
+  "files_val": 24,
+  "train_rows": 28791,
+  "val_rows": 213120,
+  "positive_rate_train": 0.1111111111111111,
+  "positive_rate_val": 0.028819444444444446,
+  "threshold": 0.08,
+  "f1": 0.016446723263567845,
+  "precision": 0.008997547516860821,
+  "recall": 0.09557147508954737
+}

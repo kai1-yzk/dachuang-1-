@@ -7,8 +7,62 @@ from flask import Blueprint, jsonify, request
 from utils.security import validate_ai_command
 from services.command_risk_service import evaluate_risk, to_command
 from services.audit_service import write_audit_log
+from utils.db import execute_query
 
 ai_bp = Blueprint('ai', __name__)
+
+_PREDICTOR_CACHE = None
+
+
+def _load_server_predictor():
+    global _PREDICTOR_CACHE
+    if _PREDICTOR_CACHE is not None:
+        return _PREDICTOR_CACHE
+
+    import os
+    import sys
+    from pathlib import Path
+
+    ai_engine_path = Path(__file__).resolve().parents[2] / 'ai_engine'
+    if str(ai_engine_path) not in sys.path:
+        sys.path.append(str(ai_engine_path))
+
+    artifact = ai_engine_path / 'models' / 'server_anomaly_artifacts.pkl'
+    if not artifact.exists():
+        raise FileNotFoundError(f"model artifact not found: {artifact}")
+
+    from models.server_anomaly_predictor import ServerAnomalyPredictor
+
+    _PREDICTOR_CACHE = ServerAnomalyPredictor.load(artifact)
+    return _PREDICTOR_CACHE
+
+
+def _load_server_metric_series(server_id: int, limit: int = 120):
+    rows = execute_query(
+        """
+        SELECT cpu_usage, memory_usage, disk_usage,
+               (network_rx_mb + network_tx_mb) AS network_total,
+               UNIX_TIMESTAMP(created_at) AS ts
+        FROM server_metrics
+        WHERE server_id=%s
+        ORDER BY created_at DESC
+        LIMIT %s
+        """,
+        (server_id, limit),
+    )
+    if not rows:
+        return None
+
+    rows = list(rows)[::-1]
+    return {
+        "timestamps": [int(r.get('ts') or 0) for r in rows],
+        "series": {
+            "cpu_usage": [float(r.get('cpu_usage') or 0.0) for r in rows],
+            "memory_usage": [float(r.get('memory_usage') or 0.0) for r in rows],
+            "disk_usage": [float(r.get('disk_usage') or 0.0) for r in rows],
+            "network_total": [float(r.get('network_total') or 0.0) for r in rows],
+        },
+    }
 
 @ai_bp.route('/predict', methods=['POST'])
 def predict_anomaly():
@@ -17,69 +71,58 @@ def predict_anomaly():
     入参: JSON (服务器特征数据)
     出参: JSON (预测结果、异常类型)
     """
-    data = request.get_json()
-    if not data or 'features' not in data:
-        return jsonify({"code": 400, "message": "Bad Request: Missing features"}), 400
-        
-    # 尝试加载真实模型进行推理
-    import os
-    import sys
-    import numpy as np
-    
-    # 将 ai_engine 添加到路径以便导入
-    ai_engine_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../ai_engine'))
-    if ai_engine_path not in sys.path:
-        sys.path.append(ai_engine_path)
-        
+    data = request.get_json() or {}
+    server_id = data.get('server_id')
+
     try:
-        from models.fusion_model import AIOpsFusionModel
-        import pickle
-        import torch
-        
-        # 提取特征
-        current_features = np.array(data['features'], dtype=np.float32)
-        # 假设前端传来 10 个时间步的序列用于趋势预测
-        seq_features = data.get('sequence', [current_features] * 10) 
-        
-        model = AIOpsFusionModel(input_features=len(current_features))
-        
-        model_dir = os.path.join(ai_engine_path, 'models')
-        iso_path = os.path.join(model_dir, 'isolation_forest.pkl')
-        lstm_path = os.path.join(model_dir, 'lstm_quantized.pth')
-        
-        # 加载隔离森林
-        if os.path.exists(iso_path):
-            with open(iso_path, 'rb') as f:
-                model.iso_forest = pickle.load(f)
-                
-        # 加载 LSTM
-        if os.path.exists(lstm_path):
-            model.lstm_model.load_state_dict(torch.load(lstm_path))
-            model.lstm_model.eval()
-            
-        result = model.predict(current_features, seq_features)
-        
+        predictor = _load_server_predictor()
+    except Exception as e:
+        return jsonify({"code": 500, "message": f"Model not ready: {str(e)}"}), 500
+
+    try:
+        if server_id:
+            packet = _load_server_metric_series(int(server_id), limit=120)
+            if not packet:
+                return jsonify({"code": 404, "message": "No server metrics found"}), 404
+            result = predictor.predict_multivariate(packet['series'], packet['timestamps'])
+        else:
+            values = data.get('values') or data.get('features')
+            if not values:
+                return jsonify({"code": 400, "message": "Missing values or server_id"}), 400
+            result = predictor.predict_series(values)
+
         return jsonify({
             "code": 200,
             "message": "Prediction Success",
             "data": {
-                "is_anomaly": result['is_anomaly'],
-                "predicted_trend": result['predicted_trend'],
-                "suggestion": "检测到服务器异常，建议检查负载" if result['is_anomaly'] else "服务器负载平稳，无需干预"
+                **result,
+                "suggestion": "检测到服务器异常，建议检查负载/进程/网络" if result.get('is_anomaly') else "服务器负载平稳，无需干预"
             }
         })
     except Exception as e:
-        # 如果模型加载失败，返回 mock 数据
+        return jsonify({"code": 500, "message": f"Prediction failed: {str(e)}"}), 500
+
+
+@ai_bp.route('/predict/server/<int:server_id>', methods=['GET'])
+def predict_server_anomaly(server_id: int):
+    """按 server_id 从 server_metrics 读取最近数据并预测异常。"""
+    try:
+        predictor = _load_server_predictor()
+        packet = _load_server_metric_series(server_id, limit=120)
+        if not packet:
+            return jsonify({"code": 404, "message": "No server metrics found"}), 404
+
+        result = predictor.predict_multivariate(packet['series'], packet['timestamps'])
         return jsonify({
             "code": 200,
-            "message": "Mock Prediction (Model load failed)",
+            "message": "Prediction Success",
             "data": {
-                "is_anomaly": False,
-                "predicted_trend": 45.2,
-                "suggestion": "模型未完全加载，此为Mock结果",
-                "error": str(e)
+                "server_id": server_id,
+                **result,
             }
         })
+    except Exception as e:
+        return jsonify({"code": 500, "message": f"Prediction failed: {str(e)}"}), 500
 
 @ai_bp.route('/execute_command', methods=['POST'])
 def execute_command():
