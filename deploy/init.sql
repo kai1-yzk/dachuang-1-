@@ -177,3 +177,67 @@ CREATE TABLE IF NOT EXISTS `assistant_approvals` (
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX `idx_assistant_approval_tenant` (`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='数字助手高危建议审批记录';
+
+CREATE TABLE IF NOT EXISTS `backup_jobs` (
+    `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `tenant_id` BIGINT UNSIGNED NOT NULL,
+    `server_id` BIGINT UNSIGNED NOT NULL,
+    `backup_type` VARCHAR(32) NOT NULL,
+    `target_path` VARCHAR(255) NOT NULL,
+    `status` VARCHAR(32) NOT NULL DEFAULT 'pending',
+    `result_json` JSON NULL,
+    `created_by` BIGINT UNSIGNED NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX `idx_backup_tenant_time` (`tenant_id`, `created_at`),
+    INDEX `idx_backup_server` (`server_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='备份任务';
+
+CREATE TABLE IF NOT EXISTS `backup_artifacts` (
+    `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `job_id` BIGINT UNSIGNED NOT NULL,
+    `file_path` VARCHAR(255) NOT NULL,
+    `file_type` VARCHAR(32) NOT NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX `idx_backup_artifacts_job` (`job_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='备份产物';
+
+CREATE TABLE IF NOT EXISTS `restore_records` (
+    `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `tenant_id` BIGINT UNSIGNED NOT NULL,
+    `artifact_id` BIGINT UNSIGNED NOT NULL,
+    `server_id` BIGINT UNSIGNED NOT NULL,
+    `status` VARCHAR(32) NOT NULL DEFAULT 'running',
+    `result_json` JSON NULL,
+    `created_by` BIGINT UNSIGNED NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX `idx_restore_tenant_time` (`tenant_id`, `created_at`),
+    INDEX `idx_restore_server` (`server_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='恢复记录';
+
+CREATE TABLE IF NOT EXISTS `batch_jobs` (
+    `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `tenant_id` BIGINT UNSIGNED NOT NULL,
+    `command_text` TEXT NOT NULL,
+    `target_server_ids` JSON NOT NULL,
+    `status` VARCHAR(32) NOT NULL DEFAULT 'pending_approval',
+    `approval_status` VARCHAR(32) NOT NULL DEFAULT 'pending',
+    `created_by` BIGINT UNSIGNED NULL,
+    `approver_id` BIGINT UNSIGNED NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX `idx_batch_tenant_time` (`tenant_id`, `created_at`),
+    INDEX `idx_batch_status` (`status`, `approval_status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='批量命令任务';
+
+CREATE TABLE IF NOT EXISTS `batch_job_results` (
+    `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `job_id` BIGINT UNSIGNED NOT NULL,
+    `server_id` BIGINT UNSIGNED NOT NULL,
+    `status` VARCHAR(32) NOT NULL,
+    `result_json` JSON NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX `idx_batch_result_job` (`job_id`),
+    INDEX `idx_batch_result_server` (`server_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='批量命令执行结果';

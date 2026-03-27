@@ -4,7 +4,7 @@
       <el-col :span="8">
         <el-card shadow="hover">
           <template #header>
-            <div class="card-title">AI 辅助运维操作</div>
+            <div class="card-title">智能助手运维操作</div>
           </template>
 
           <el-form label-width="90px">
@@ -25,7 +25,7 @@
         <el-card shadow="hover">
           <template #header>
             <div class="header-bar">
-              <span class="card-title">AI 方案与执行确认</span>
+              <span class="card-title">执行方案与确认</span>
               <el-tag v-if="plan" :type="riskTagType(plan.risk.level)">{{ plan.risk.level }}</el-tag>
             </div>
           </template>

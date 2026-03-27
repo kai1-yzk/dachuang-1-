@@ -36,12 +36,6 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
-    path: '/servers',
-    name: 'Servers',
-    component: () => import('../views/Servers.vue'),
-    meta: { requiresAuth: true }
-  },
-  {
     path: '/tenants',
     name: 'Tenants',
     component: () => import('../views/Tenants.vue'),
@@ -51,6 +45,36 @@ const routes = [
     path: '/assistant',
     name: 'Assistant',
     component: () => import('../views/Assistant.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/services',
+    name: 'Services',
+    component: () => import('../views/Services.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/logs',
+    name: 'Logs',
+    component: () => import('../views/Logs.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/backup',
+    name: 'Backup',
+    component: () => import('../views/Backup.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/files',
+    name: 'FileManager',
+    component: () => import('../views/FileManager.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/batch',
+    name: 'BatchExec',
+    component: () => import('../views/BatchExec.vue'),
     meta: { requiresAuth: true }
   }
 ]

@@ -267,3 +267,79 @@ def get_metric_trend(metric: str, period: str, server_id: Optional[int] = None, 
         "latest": latest,
         "points": points,
     }
+
+
+def get_k8s_overview(server_id: Optional[int] = None) -> Dict:
+    servers = list_ssh_servers()
+    if not servers:
+        return {
+            "available": False,
+            "message": "no managed ssh server",
+            "server_id": None,
+            "summary": {},
+            "nodes": [],
+        }
+
+    target_server_id = server_id or int(servers[0]["id"])
+
+    try:
+        nodes_result = run_command_stream(target_server_id, "kubectl get nodes --no-headers 2>/dev/null || true", timeout=15)
+        pods_result = run_command_stream(target_server_id, "kubectl get pods -A --no-headers 2>/dev/null || true", timeout=15)
+        deploy_result = run_command_stream(target_server_id, "kubectl get deploy -A --no-headers 2>/dev/null || true", timeout=15)
+
+        nodes_text = "".join(x.get("text", "") for x in nodes_result.get("chunks", []) if x.get("stream") == "stdout")
+        pods_text = "".join(x.get("text", "") for x in pods_result.get("chunks", []) if x.get("stream") == "stdout")
+        deploy_text = "".join(x.get("text", "") for x in deploy_result.get("chunks", []) if x.get("stream") == "stdout")
+
+        node_lines = [line.strip() for line in nodes_text.splitlines() if line.strip()]
+        pod_lines = [line.strip() for line in pods_text.splitlines() if line.strip()]
+        deploy_lines = [line.strip() for line in deploy_text.splitlines() if line.strip()]
+
+        if not node_lines and not pod_lines:
+            return {
+                "available": False,
+                "message": "kubectl not available or no cluster context",
+                "server_id": target_server_id,
+                "summary": {},
+                "nodes": [],
+            }
+
+        nodes = []
+        ready_nodes = 0
+        for ln in node_lines:
+            cols = ln.split()
+            if len(cols) < 2:
+                continue
+            name = cols[0]
+            status = cols[1]
+            if "Ready" in status:
+                ready_nodes += 1
+            nodes.append({"name": name, "status": status})
+
+        running_pods = 0
+        for ln in pod_lines:
+            cols = ln.split()
+            if len(cols) >= 4 and cols[3].lower() == "running":
+                running_pods += 1
+
+        return {
+            "available": True,
+            "message": "ok",
+            "server_id": target_server_id,
+            "summary": {
+                "nodes_total": len(nodes),
+                "nodes_ready": ready_nodes,
+                "pods_total": len(pod_lines),
+                "pods_running": running_pods,
+                "deployments_total": len(deploy_lines),
+            },
+            "nodes": nodes[:20],
+        }
+    except Exception as e:
+        return {
+            "available": False,
+            "message": str(e),
+            "server_id": target_server_id,
+            "summary": {},
+            "nodes": [],
+        }

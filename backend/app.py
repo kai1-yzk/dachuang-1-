@@ -21,6 +21,11 @@ from routes.audit import audit_bp
 from routes.servers import servers_bp
 from routes.assistant import assistant_bp
 from routes.tenants import tenants_bp
+from routes.services import services_bp
+from routes.logs import logs_bp
+from routes.backup import backup_bp
+from routes.files import files_bp
+from routes.batch import batch_bp
 from routes.ws_terminal import init_ws_handlers
 from services.server_metrics_service import start_auto_collector
 from utils.security import rbac_middleware, security_headers_middleware
@@ -80,6 +85,11 @@ def create_app():
     app.register_blueprint(servers_bp, url_prefix='/api/servers')
     app.register_blueprint(assistant_bp, url_prefix='/api/assistant')
     app.register_blueprint(tenants_bp, url_prefix='/api/tenants')
+    app.register_blueprint(services_bp, url_prefix='/api/services')
+    app.register_blueprint(logs_bp, url_prefix='/api/logs')
+    app.register_blueprint(backup_bp, url_prefix='/api/backup')
+    app.register_blueprint(files_bp, url_prefix='/api/files')
+    app.register_blueprint(batch_bp, url_prefix='/api/batch')
     start_auto_collector()
     init_ws_handlers(socketio)
     

@@ -1,7 +1,7 @@
 """监控指标路由：支持 SSH 实时采集与大屏展示。"""
 from flask import Blueprint, jsonify, request
 
-from services.server_metrics_service import collect_all_ssh_metrics, get_dashboard_payload, get_metric_trend
+from services.server_metrics_service import collect_all_ssh_metrics, get_dashboard_payload, get_k8s_overview, get_metric_trend
 
 metrics_bp = Blueprint('metrics', __name__)
 
@@ -70,4 +70,11 @@ def metric_trend():
         start_time=start_time,
         end_time=end_time,
     )
+    return jsonify({"code": 200, "message": "ok", "data": data})
+
+
+@metrics_bp.route('/k8s-overview', methods=['GET'])
+def k8s_overview():
+    server_id = request.args.get('server_id', type=int)
+    data = get_k8s_overview(server_id=server_id)
     return jsonify({"code": 200, "message": "ok", "data": data})

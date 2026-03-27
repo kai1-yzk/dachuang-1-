@@ -1,63 +1,73 @@
 <template>
-  <div class="dashboard">
-    <el-row :gutter="20">
+  <div class="bt-dashboard">
+    <div class="screen-head">
+      <div>
+        <h2>监控大屏</h2>
+        <p>数据源为实时采集的服务器指标、审计日志和 Kubernetes 集群状态</p>
+      </div>
+      <el-space>
+        <el-tag :type="onlineTagType">在线 {{ onlineCount }}/{{ totalCount }}</el-tag>
+        <el-button @click="fetchDashboardData">立即刷新</el-button>
+      </el-space>
+    </div>
+
+    <el-row :gutter="14">
       <el-col :span="6" v-for="item in summaryCards" :key="item.metricKey">
-        <el-card shadow="hover" class="data-card clickable" :body-style="{ padding: '20px' }" @click="goMetric(item.metricKey)">
-          <div class="card-header">
-            <span>{{ item.title }}</span>
-            <el-icon :class="item.iconClass"><component :is="item.icon" /></el-icon>
-          </div>
-          <div class="card-value">{{ item.value }}<span class="unit">{{ item.unit }}</span></div>
-          <div class="card-footer">
-            <span class="trend" :class="item.trend > 0 ? 'up' : 'down'">
-              {{ item.trend > 0 ? '+' : '' }}{{ item.trend }}% 较昨日
-            </span>
-          </div>
+        <el-card class="metric-card" shadow="hover" @click="goMetric(item.metricKey)">
+          <div class="metric-title">{{ item.title }}</div>
+          <div class="metric-value">{{ item.value }} <small>{{ item.unit }}</small></div>
+          <el-progress :percentage="Math.min(100, Math.max(0, Number(item.value) || 0))" :show-text="false" :stroke-width="8" />
         </el-card>
       </el-col>
     </el-row>
 
-    <el-row :gutter="20" class="mt-20">
-      <el-col :span="16">
-        <el-card shadow="hover" class="chart-card">
+    <el-row :gutter="14" class="mt-14">
+      <el-col :span="14">
+        <el-card class="block-card" shadow="hover">
           <template #header>
-            <div class="card-header-title">
-              <span>AI 故障预测与报警详情</span>
-              <el-tag :type="aiStatus.type" size="small">{{ aiStatus.text }}</el-tag>
-            </div>
+            <div class="card-head"><span>故障预测</span><el-tag type="warning">模型推理结果</el-tag></div>
           </template>
-          <el-descriptions v-if="prediction.alert" :column="2" border size="small" class="predict-box">
+          <el-descriptions v-if="prediction.alert" :column="2" border size="small">
             <el-descriptions-item label="故障类型">{{ prediction.alert.fault_type }}</el-descriptions-item>
-            <el-descriptions-item label="风险等级">
-              <el-tag :type="riskType(prediction.alert.risk_level)">{{ prediction.alert.risk_level }}</el-tag>
-            </el-descriptions-item>
+            <el-descriptions-item label="风险等级"><el-tag :type="riskType(prediction.alert.risk_level)">{{ prediction.alert.risk_level }}</el-tag></el-descriptions-item>
             <el-descriptions-item label="预测提前量">{{ prediction.alert.lead_time_minutes }} 分钟</el-descriptions-item>
             <el-descriptions-item label="异常分数">{{ Number(prediction.anomaly_score || 0).toFixed(3) }}</el-descriptions-item>
             <el-descriptions-item label="故障起因" :span="2">{{ prediction.alert.cause }}</el-descriptions-item>
-            <el-descriptions-item label="紧急解决方法" :span="2">{{ prediction.alert.emergency_solution }}</el-descriptions-item>
+            <el-descriptions-item label="应急处置" :span="2">{{ prediction.alert.emergency_solution }}</el-descriptions-item>
             <el-descriptions-item label="预防建议" :span="2">{{ prediction.alert.prevention_advice }}</el-descriptions-item>
           </el-descriptions>
-          <el-empty v-else description="暂无预测结果" />
+          <el-empty v-else description="暂无可用预测" />
         </el-card>
       </el-col>
 
-      <el-col :span="8">
-        <el-card shadow="hover" class="log-card">
+      <el-col :span="10">
+        <el-card class="block-card" shadow="hover">
           <template #header>
-            <div class="card-header-title">
-              <span>AI 安全拦截事件</span>
-              <el-tag size="small" type="danger">自动拦截开启</el-tag>
-            </div>
+            <div class="card-head"><span>Kubernetes 概览</span><el-tag :type="k8s.available ? 'success' : 'info'">{{ k8s.available ? '已连接' : '未连接' }}</el-tag></div>
+          </template>
+          <div v-if="k8s.available" class="k8s-grid">
+            <div class="k8s-item"><b>{{ k8s.summary.nodes_ready }}</b><span>Ready 节点</span></div>
+            <div class="k8s-item"><b>{{ k8s.summary.nodes_total }}</b><span>节点总数</span></div>
+            <div class="k8s-item"><b>{{ k8s.summary.pods_running }}</b><span>Running Pods</span></div>
+            <div class="k8s-item"><b>{{ k8s.summary.deployments_total }}</b><span>Deployments</span></div>
+          </div>
+          <el-alert v-else type="info" :closable="false" :title="k8s.message || '未检测到 kubectl 集群上下文'" />
+          <el-table v-if="k8s.available" :data="k8s.nodes || []" size="small" max-height="200" style="margin-top: 10px">
+            <el-table-column prop="name" label="节点" min-width="140" />
+            <el-table-column prop="status" label="状态" width="120" />
+          </el-table>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="14" class="mt-14">
+      <el-col :span="24">
+        <el-card class="block-card" shadow="hover">
+          <template #header>
+            <div class="card-head"><span>安全拦截事件</span><el-tag type="danger">自动拦截启用</el-tag></div>
           </template>
           <el-timeline>
-            <el-timeline-item
-              v-for="(activity, index) in activities"
-              :key="index"
-              :type="activity.type"
-              :color="activity.color"
-              :size="activity.size"
-              :timestamp="activity.timestamp"
-            >
+            <el-timeline-item v-for="(activity, index) in activities" :key="index" :timestamp="activity.timestamp" :color="activity.color || '#f56c6c'">
               {{ activity.content }}
             </el-timeline-item>
           </el-timeline>
@@ -68,7 +78,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import request from '../utils/request'
 
@@ -84,7 +94,13 @@ const summaryCards = ref([
 const aiStatus = ref({ type: 'success', text: '系统平稳' })
 const prediction = ref({})
 const activities = ref([])
+const k8s = ref({ available: false, summary: {}, nodes: [] })
 let timer = null
+
+const onlineCount = ref(0)
+const totalCount = ref(0)
+
+const onlineTagType = computed(() => (totalCount.value > 0 && onlineCount.value === totalCount.value ? 'success' : 'warning'))
 
 const safeTrend = (next, prev) => {
   if (!prev || prev === 0) return 0
@@ -123,6 +139,8 @@ const applyDashboardData = (data) => {
 
   const totalServers = data?.servers?.total || 0
   const onlineServers = data?.servers?.online || 0
+  totalCount.value = totalServers
+  onlineCount.value = onlineServers
   aiStatus.value = onlineServers === totalServers && totalServers > 0
     ? { type: 'success', text: `在线 ${onlineServers}/${totalServers}` }
     : { type: 'warning', text: `在线 ${onlineServers}/${totalServers} · 风险自动拦截中` }
@@ -159,7 +177,7 @@ const applyDashboardData = (data) => {
 
 const fetchDashboardData = async () => {
   try {
-    const [metricsRes, securityRes] = await Promise.all([
+    const [metricsRes, securityRes, k8sRes] = await Promise.all([
       request.get('/metrics/dashboard', {
         params: {
           collect_now: 0,
@@ -168,7 +186,8 @@ const fetchDashboardData = async () => {
       }),
       request.get('/audit/security-overview', {
         params: { limit: 300 }
-      })
+      }),
+      request.get('/metrics/k8s-overview')
     ])
 
     if (metricsRes.code === 200) {
@@ -184,6 +203,10 @@ const fetchDashboardData = async () => {
           prediction.value = predictRes.data || {}
         }
       }
+    }
+
+    if (k8sRes?.code === 200) {
+      k8s.value = k8sRes.data || { available: false, summary: {}, nodes: [] }
     }
   } catch (e) {
     aiStatus.value = { type: 'danger', text: '采集失败' }
@@ -201,66 +224,82 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.mt-20 {
-  margin-top: 20px;
-}
-
-.data-card {
-  border-radius: 8px;
-}
-
-.clickable {
-  cursor: pointer;
-}
-
-.card-header {
+.screen-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  color: #909399;
-  font-size: 14px;
+  margin-bottom: 12px;
 }
 
-.card-value {
-  font-size: 28px;
-  font-weight: bold;
-  color: #303133;
-  margin: 10px 0;
+.screen-head h2 {
+  margin: 0;
 }
 
-.unit {
-  font-size: 14px;
-  font-weight: normal;
-  margin-left: 4px;
-  color: #909399;
+.screen-head p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 12px;
 }
 
-.card-footer {
+.metric-card {
+  cursor: pointer;
+  border-radius: 10px;
+}
+
+.metric-title {
+  color: #64748b;
   font-size: 13px;
 }
 
-.trend.up { color: #f56c6c; }
-.trend.down { color: #67c23a; }
-
-.icon-blue { color: #409eff; font-size: 20px; }
-.icon-green { color: #67c23a; font-size: 20px; }
-.icon-purple { color: #b37feb; font-size: 20px; }
-.icon-orange { color: #e6a23c; font-size: 20px; }
-
-.chart-card, .log-card {
-  border-radius: 8px;
-  height: 400px;
+.metric-value {
+  margin: 8px 0 12px;
+  font-size: 28px;
+  font-weight: 700;
+  color: #0f172a;
 }
 
-.predict-box {
-  margin-top: 6px;
+.metric-value small {
+  font-size: 13px;
+  color: #64748b;
 }
 
-.card-header-title {
+.block-card {
+  border-radius: 12px;
+}
+
+.card-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-weight: bold;
+  font-weight: 600;
 }
 
+.k8s-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.k8s-item {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.k8s-item b {
+  color: #1d4ed8;
+  font-size: 20px;
+}
+
+.k8s-item span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.mt-14 {
+  margin-top: 14px;
+}
 </style>
