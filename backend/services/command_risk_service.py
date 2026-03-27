@@ -1,5 +1,6 @@
 import re
 import shlex
+import os
 from typing import Any, Dict
 
 DANGEROUS_PATTERNS = [
@@ -21,6 +22,13 @@ OPERATOR_WHITELIST = [
     "netstat -an",
     "journalctl -xe",
 ]
+
+
+def _bool_env(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 NL_COMMAND_MAP = {
     "检查网络状态": "netstat -an",
@@ -80,7 +88,9 @@ def evaluate_risk(command: str, role_name: str, force_approved: bool = False) ->
     reason = ""
 
     if role_name == "operator":
-        if not any(command.startswith(prefix) for prefix in OPERATOR_WHITELIST):
+        # 默认允许低风险命令，避免常见运维指令（如 ls/pwd/ps）被全部拦截。
+        strict_whitelist = _bool_env("TERMINAL_STRICT_WHITELIST", default=False)
+        if strict_whitelist and not any(command.startswith(prefix) for prefix in OPERATOR_WHITELIST):
             allowed = False
             reason = "普通用户仅允许白名单命令"
         if level in ("MEDIUM", "HIGH"):

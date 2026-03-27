@@ -24,7 +24,7 @@
         <el-card shadow="hover" class="chart-card">
           <template #header>
             <div class="card-header-title">
-              <span>服务器资源预测趋势 (LSTM)</span>
+              <span>服务器资源实时趋势</span>
               <el-tag :type="aiStatus.type" size="small">{{ aiStatus.text }}</el-tag>
             </div>
           </template>
@@ -37,7 +37,7 @@
         <el-card shadow="hover" class="log-card">
           <template #header>
             <div class="card-header-title">
-              <span>异常检测事件 (Isolation Forest)</span>
+              <span>采集事件</span>
               <el-button type="primary" link>查看全部</el-button>
             </div>
           </template>
@@ -62,25 +62,100 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
+import request from '../utils/request'
 
 const summaryCards = ref([
-  { title: 'CPU 负载', value: '45.2', unit: '%', icon: 'Cpu', iconClass: 'icon-blue', trend: 2.1 },
-  { title: '内存使用', value: '62.8', unit: '%', icon: 'Odometer', iconClass: 'icon-green', trend: -1.5 },
-  { title: '磁盘 IOPS', value: '312', unit: '次/s', icon: 'PieChart', iconClass: 'icon-purple', trend: 5.4 },
-  { title: '网络入/出', value: '1.2', unit: 'MB/s', icon: 'Connection', iconClass: 'icon-orange', trend: 0.8 },
+  { title: 'CPU 负载', value: '0.0', unit: '%', icon: 'Cpu', iconClass: 'icon-blue', trend: 0 },
+  { title: '内存使用', value: '0.0', unit: '%', icon: 'Odometer', iconClass: 'icon-green', trend: 0 },
+  { title: '磁盘使用', value: '0.0', unit: '%', icon: 'PieChart', iconClass: 'icon-purple', trend: 0 },
+  { title: '网络吞吐', value: '0.0', unit: 'MB', icon: 'Connection', iconClass: 'icon-orange', trend: 0 },
 ])
 
 const aiStatus = ref({ type: 'success', text: '系统平稳' })
 
-const activities = ref([
-  { content: '检测到 CPU 瞬时飙升', timestamp: '10分钟前', type: 'warning', size: 'large' },
-  { content: 'SSH 登录失败 (IP: 192.168.1.100)', timestamp: '1小时前', type: 'danger', color: '#f56c6c' },
-  { content: '自动拦截未知高危进程', timestamp: '2小时前', type: 'success' },
-  { content: '内存清理优化执行完毕', timestamp: '5小时前', type: 'info' }
-])
+const activities = ref([])
 
 const lineChartRef = ref(null)
 let chartInstance = null
+let timer = null
+
+const safeTrend = (next, prev) => {
+  if (!prev || prev === 0) return 0
+  return Number((((next - prev) / prev) * 100).toFixed(1))
+}
+
+const applyDashboardData = (data) => {
+  const summary = data?.summary || {}
+  const trend = data?.trend || []
+
+  const prevCpu = Number(summaryCards.value[0].value || 0)
+  const prevMem = Number(summaryCards.value[1].value || 0)
+  const prevDisk = Number(summaryCards.value[2].value || 0)
+  const prevNet = Number(summaryCards.value[3].value || 0)
+
+  const cpu = Number(summary.cpu || 0)
+  const memory = Number(summary.memory || 0)
+  const disk = Number(summary.disk || 0)
+  const network = Number(summary.network || 0)
+
+  summaryCards.value = [
+    { ...summaryCards.value[0], value: cpu.toFixed(1), trend: safeTrend(cpu, prevCpu) },
+    { ...summaryCards.value[1], value: memory.toFixed(1), trend: safeTrend(memory, prevMem) },
+    { ...summaryCards.value[2], value: disk.toFixed(1), trend: safeTrend(disk, prevDisk) },
+    { ...summaryCards.value[3], value: network.toFixed(1), trend: safeTrend(network, prevNet) },
+  ]
+
+  const totalServers = data?.servers?.total || 0
+  const onlineServers = data?.servers?.online || 0
+  aiStatus.value = onlineServers === totalServers && totalServers > 0
+    ? { type: 'success', text: `在线 ${onlineServers}/${totalServers}` }
+    : { type: 'warning', text: `在线 ${onlineServers}/${totalServers}` }
+
+  if (chartInstance) {
+    chartInstance.setOption({
+      xAxis: { data: trend.map(x => x.time) },
+      series: [
+        { name: '实际负载', data: trend.map(x => Number(x.cpu || 0)) },
+        { name: '内存使用率', data: trend.map(x => Number(x.memory || 0)) },
+      ],
+    })
+  }
+
+  const collectResults = data?.collect_result || []
+  if (collectResults.length) {
+    activities.value = collectResults.slice(0, 8).map(item => {
+      if (item.ok) {
+        return {
+          content: `服务器 ${item.server_id} 采集成功 CPU=${Number(item?.metrics?.cpu || 0).toFixed(1)}%`,
+          timestamp: '刚刚',
+          type: 'success',
+        }
+      }
+      return {
+        content: `服务器 ${item.server_id} 采集失败: ${item.error || 'unknown error'}`,
+        timestamp: '刚刚',
+        type: 'danger',
+        color: '#f56c6c',
+      }
+    })
+  }
+}
+
+const fetchDashboardData = async () => {
+  try {
+    const res = await request.get('/metrics/dashboard', {
+      params: {
+        collect_now: 1,
+        points: 12,
+      }
+    })
+    if (res.code === 200) {
+      applyDashboardData(res.data)
+    }
+  } catch (e) {
+    aiStatus.value = { type: 'danger', text: '采集失败' }
+  }
+}
 
 const initChart = () => {
   if (!lineChartRef.value) return
@@ -129,11 +204,14 @@ const resizeHandler = () => {
 
 onMounted(() => {
   initChart()
+  fetchDashboardData()
+  timer = setInterval(fetchDashboardData, 15000)
   window.addEventListener('resize', resizeHandler)
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', resizeHandler)
+  if (timer) clearInterval(timer)
   if (chartInstance) chartInstance.dispose()
 })
 </script>

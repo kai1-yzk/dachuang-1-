@@ -16,14 +16,12 @@
       </div>
 
       <div class="input-area">
-        <el-input-number
-          v-model="serverId"
-          :min="1"
-          size="small"
-          class="server-input"
-          @change="reconnectTerminal"
-        />
+        <el-select v-model="serverId" size="small" class="server-select" placeholder="选择服务器" @change="reconnectTerminal">
+          <el-option v-for="srv in servers" :key="srv.id" :label="`${srv.hostname} (${srv.ip}:${srv.port})`" :value="srv.id" />
+        </el-select>
+        <el-button size="small" @click="fetchServers">刷新</el-button>
         <el-button type="primary" size="small" @click="reconnectTerminal">连接服务器</el-button>
+        <el-button type="success" size="small" @click="showAddServerDialog = true">新增SSH服务器</el-button>
         <span class="prompt">[admin@ai-ops] $</span>
         <input 
           v-model="currentInput" 
@@ -55,12 +53,38 @@
         </el-table-column>
       </el-table>
     </el-card>
+
+    <el-dialog v-model="showAddServerDialog" title="接入 SSH 服务器" width="520px">
+      <el-form :model="newServer" label-width="110px">
+        <el-form-item label="名称">
+          <el-input v-model="newServer.hostname" placeholder="例如 prod-web-1" />
+        </el-form-item>
+        <el-form-item label="IP 地址">
+          <el-input v-model="newServer.ip" placeholder="例如 192.168.1.10" />
+        </el-form-item>
+        <el-form-item label="端口">
+          <el-input-number v-model="newServer.port" :min="1" :max="65535" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="SSH 用户">
+          <el-input v-model="newServer.ssh_username" placeholder="例如 root" />
+        </el-form-item>
+        <el-form-item label="SSH 密码">
+          <el-input v-model="newServer.ssh_password" type="password" show-password placeholder="请输入密码" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showAddServerDialog = false">取消</el-button>
+        <el-button type="primary" :loading="addingServer" @click="submitAddServer">保存并测试连接</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, nextTick, onMounted, onUnmounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import { io } from 'socket.io-client'
+import request from '../utils/request'
 
 const history = ref([
   { type: 'system', text: 'Welcome to AI Ops Terminal (Lightweight Edition).' },
@@ -71,10 +95,40 @@ const currentInput = ref('')
 const terminalWindow = ref(null)
 const socket = ref(null)
 const sessionId = ref('')
-const serverId = ref(1)
+const serverId = ref(null)
 const pendingCommand = ref('')
+const servers = ref([])
+const showAddServerDialog = ref(false)
+const addingServer = ref(false)
+
+const newServer = ref({
+  hostname: '',
+  ip: '',
+  port: 22,
+  ssh_username: '',
+  ssh_password: '',
+})
 
 const auditLogs = ref([])
+
+const fetchServers = async () => {
+  try {
+    const res = await request.get('/servers/')
+    if (res.code === 200) {
+      servers.value = res.data || []
+      if (!servers.value.length) {
+        serverId.value = null
+        history.value.push({ type: 'system', text: '尚未接入服务器，请先新增 SSH 服务器。' })
+        return
+      }
+      if (!serverId.value || !servers.value.find(s => s.id === serverId.value)) {
+        serverId.value = servers.value[0].id
+      }
+    }
+  } catch (e) {
+    history.value.push({ type: 'system', text: '加载服务器列表失败。' })
+  }
+}
 
 const getSocketBaseURL = () => {
   const { protocol, host } = window.location
@@ -85,6 +139,10 @@ const connectTerminal = () => {
   const token = localStorage.getItem('access_token')
   if (!token) {
     history.value.push({ type: 'system', text: '未检测到登录 Token，请重新登录。' })
+    return
+  }
+  if (!serverId.value) {
+    history.value.push({ type: 'system', text: '请先选择服务器。' })
     return
   }
 
@@ -148,6 +206,10 @@ const connectTerminal = () => {
 }
 
 const reconnectTerminal = () => {
+  if (!serverId.value) {
+    history.value.push({ type: 'system', text: '请先选择服务器。' })
+    return
+  }
   if (socket.value && sessionId.value) {
     socket.value.emit('terminal_disconnect', { session_id: sessionId.value })
   }
@@ -158,6 +220,49 @@ const reconnectTerminal = () => {
   }
   history.value.push({ type: 'system', text: `正在连接 server_id=${serverId.value}...` })
   connectTerminal()
+}
+
+const submitAddServer = async () => {
+  if (!newServer.value.ip || !newServer.value.ssh_username || !newServer.value.ssh_password) {
+    ElMessage.error('请填写 ip、SSH 用户、SSH 密码')
+    return
+  }
+
+  addingServer.value = true
+  try {
+    const res = await request.post('/servers/', {
+      hostname: newServer.value.hostname,
+      ip: newServer.value.ip,
+      port: newServer.value.port,
+      auth_type: 'password',
+      ssh_username: newServer.value.ssh_username,
+      ssh_password: newServer.value.ssh_password,
+      connect_timeout: 15,
+    })
+
+    if (res.code !== 200) {
+      ElMessage.error(res.message || '保存服务器失败')
+      return
+    }
+
+    const createdServerId = res.data.server_id
+    const testRes = await request.post(`/servers/${createdServerId}/ssh-test`)
+    if (testRes.code === 200) {
+      ElMessage.success('服务器接入成功，SSH 连接测试通过')
+    } else {
+      ElMessage.warning(testRes.message || '服务器已保存，但连接测试未通过')
+    }
+
+    showAddServerDialog.value = false
+    newServer.value = { hostname: '', ip: '', port: 22, ssh_username: '', ssh_password: '' }
+    await fetchServers()
+    serverId.value = createdServerId
+    reconnectTerminal()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '接入服务器失败')
+  } finally {
+    addingServer.value = false
+  }
 }
 
 const handleCommand = async () => {
@@ -190,7 +295,9 @@ const scrollToBottom = () => {
 }
 
 onMounted(() => {
-  connectTerminal()
+  fetchServers().then(() => {
+    connectTerminal()
+  })
 })
 
 onUnmounted(() => {
@@ -267,6 +374,11 @@ onUnmounted(() => {
 
 .server-input {
   width: 120px;
+  margin-right: 8px;
+}
+
+.server-select {
+  width: 300px;
   margin-right: 8px;
 }
 

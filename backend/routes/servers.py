@@ -3,14 +3,112 @@ import json
 from flask import Blueprint, jsonify, request
 
 from services.agent_service import list_servers
+from services.ssh_service import run_command_stream, validate_server_ssh_config
 from utils.db import execute_query, execute_update
 
 servers_bp = Blueprint("servers", __name__)
 
 
+def _normalize_server_payload(payload):
+    hostname = (payload.get("hostname") or "").strip()
+    ip = (payload.get("ip") or "").strip()
+    port = int(payload.get("port") or 22)
+    auth_type = (payload.get("auth_type") or "password").lower()
+    ssh_username = (payload.get("ssh_username") or "").strip()
+    ssh_password = payload.get("ssh_password")
+    private_key = payload.get("private_key")
+    private_key_passphrase = payload.get("private_key_passphrase")
+    connect_timeout = int(payload.get("connect_timeout") or 15)
+    return {
+        "hostname": hostname,
+        "ip": ip,
+        "port": port,
+        "auth_type": auth_type,
+        "ssh_username": ssh_username,
+        "ssh_password": ssh_password,
+        "private_key": private_key,
+        "private_key_passphrase": private_key_passphrase,
+        "connect_timeout": connect_timeout,
+    }
+
+
+def _validate_ssh_payload(data):
+    if not data["ip"]:
+        return "ip is required"
+    if data["auth_type"] not in ("password", "key"):
+        return "auth_type must be password or key"
+    if not data["ssh_username"]:
+        return "ssh_username is required"
+    if data["auth_type"] == "password" and not data["ssh_password"]:
+        return "ssh_password is required for password auth"
+    if data["auth_type"] == "key" and not data["private_key"]:
+        return "private_key is required for key auth"
+    return None
+
+
 @servers_bp.route("/", methods=["GET"])
 def list_all():
     return jsonify({"code": 200, "message": "ok", "data": list_servers()})
+
+
+@servers_bp.route("/", methods=["POST"])
+def create_or_update_ssh_server():
+    payload = request.get_json(silent=True) or {}
+    data = _normalize_server_payload(payload)
+    error = _validate_ssh_payload(data)
+    if error:
+        return jsonify({"code": 400, "message": error, "data": None}), 400
+
+    auth_data = {
+        "ssh_username": data["ssh_username"],
+        "ssh_password": data["ssh_password"] if data["auth_type"] == "password" else None,
+        "private_key": data["private_key"] if data["auth_type"] == "key" else None,
+        "private_key_passphrase": data["private_key_passphrase"] if data["auth_type"] == "key" else None,
+        "connect_timeout": data["connect_timeout"],
+    }
+    auth_data_json = json.dumps(auth_data, ensure_ascii=False)
+
+    hostname = data["hostname"] or data["ip"]
+    existing = execute_query("SELECT id FROM servers WHERE ip=%s AND port=%s LIMIT 1", (data["ip"], data["port"]))
+    if existing:
+        server_id = existing[0]["id"]
+        execute_update(
+            """
+            UPDATE servers
+            SET hostname=%s, protocol='ssh', auth_type=%s, auth_data=%s,
+                ssh_username=%s, connect_timeout=%s, is_enabled=1, updated_at=NOW()
+            WHERE id=%s
+            """,
+            (hostname, data["auth_type"], auth_data_json, data["ssh_username"], data["connect_timeout"], server_id),
+        )
+        message = "server updated"
+    else:
+        execute_update(
+            """
+            INSERT INTO servers
+            (hostname, ip, port, protocol, auth_type, auth_data, ssh_username, connect_timeout, is_enabled, status, created_at, updated_at)
+            VALUES (%s, %s, %s, 'ssh', %s, %s, %s, %s, 1, 'offline', NOW(), NOW())
+            """,
+            (hostname, data["ip"], data["port"], data["auth_type"], auth_data_json, data["ssh_username"], data["connect_timeout"]),
+        )
+        created = execute_query("SELECT id FROM servers WHERE ip=%s AND port=%s ORDER BY id DESC LIMIT 1", (data["ip"], data["port"]))
+        server_id = created[0]["id"] if created else None
+        message = "server created"
+
+    return jsonify(
+        {
+            "code": 200,
+            "message": message,
+            "data": {
+                "server_id": server_id,
+                "hostname": hostname,
+                "ip": data["ip"],
+                "port": data["port"],
+                "auth_type": data["auth_type"],
+                "ssh_username": data["ssh_username"],
+            },
+        }
+    )
 
 
 @servers_bp.route("/<int:server_id>", methods=["GET"])
@@ -95,3 +193,20 @@ def update_ssh_config(server_id: int):
             },
         }
     )
+
+
+@servers_bp.route("/<int:server_id>/ssh-test", methods=["POST"])
+def test_ssh_connection(server_id: int):
+    check = validate_server_ssh_config(server_id)
+    if not check.get("ok"):
+        return jsonify({"code": 400, "message": check.get("message", "invalid ssh config"), "data": None}), 400
+
+    try:
+        result = run_command_stream(server_id, "echo __AIOPS_SSH_OK__", timeout=10)
+        output = "".join(chunk.get("text", "") for chunk in result.get("chunks", []))
+        ok = "__AIOPS_SSH_OK__" in output and int(result.get("exit_status", 1)) == 0
+        if not ok:
+            return jsonify({"code": 500, "message": "ssh connected but test command failed", "data": result}), 500
+        return jsonify({"code": 200, "message": "ssh connection success", "data": {"server_id": server_id}})
+    except Exception as e:
+        return jsonify({"code": 500, "message": f"ssh connection failed: {str(e)}", "data": None}), 500
