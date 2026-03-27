@@ -17,7 +17,7 @@
           <span>监控大盘</span>
         </el-menu-item>
         <el-menu-item index="/terminal">
-          <el-icon><Terminal /></el-icon>
+          <el-icon><Monitor /></el-icon>
           <span>AI 智能终端</span>
         </el-menu-item>
       </el-menu>

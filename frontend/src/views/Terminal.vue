@@ -7,6 +7,15 @@
           <el-tag type="danger" size="small">三重安全拦截已开启</el-tag>
         </div>
       </template>
+
+      <div class="toolbar-area">
+        <el-select v-model="serverId" size="small" class="server-select" placeholder="选择服务器" @change="reconnectTerminal">
+          <el-option v-for="srv in servers" :key="srv.id" :label="`${srv.hostname} (${srv.ip}:${srv.port})`" :value="srv.id" />
+        </el-select>
+        <el-button size="small" @click="fetchServers">刷新</el-button>
+        <el-button type="primary" size="small" @click="reconnectTerminal">连接服务器</el-button>
+        <el-button type="success" size="small" @click="showAddServerDialog = true">新增SSH服务器</el-button>
+      </div>
       
       <div class="terminal-window" ref="terminalWindow">
         <div class="output-line" v-for="(line, index) in history" :key="index">
@@ -16,12 +25,6 @@
       </div>
 
       <div class="input-area">
-        <el-select v-model="serverId" size="small" class="server-select" placeholder="选择服务器" @change="reconnectTerminal">
-          <el-option v-for="srv in servers" :key="srv.id" :label="`${srv.hostname} (${srv.ip}:${srv.port})`" :value="srv.id" />
-        </el-select>
-        <el-button size="small" @click="fetchServers">刷新</el-button>
-        <el-button type="primary" size="small" @click="reconnectTerminal">连接服务器</el-button>
-        <el-button type="success" size="small" @click="showAddServerDialog = true">新增SSH服务器</el-button>
         <span class="prompt">[admin@ai-ops] $</span>
         <input 
           v-model="currentInput" 
@@ -110,12 +113,41 @@ const newServer = ref({
 })
 
 const auditLogs = ref([])
+let refreshTimer = null
+const SERVER_CACHE_KEY = 'terminal_server_list_cache'
+
+const loadServerCache = () => {
+  try {
+    const raw = localStorage.getItem(SERVER_CACHE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+const saveServerCache = (items) => {
+  try {
+    localStorage.setItem(SERVER_CACHE_KEY, JSON.stringify(items || []))
+  } catch {
+    // ignore cache write errors
+  }
+}
 
 const fetchServers = async () => {
   try {
     const res = await request.get('/servers/')
     if (res.code === 200) {
-      servers.value = res.data || []
+      const nextServers = res.data || []
+      if (nextServers.length) {
+        servers.value = nextServers
+        saveServerCache(nextServers)
+      } else if (!servers.value.length) {
+        const cached = loadServerCache()
+        servers.value = cached
+      }
+
       if (!servers.value.length) {
         serverId.value = null
         history.value.push({ type: 'system', text: '尚未接入服务器，请先新增 SSH 服务器。' })
@@ -126,7 +158,13 @@ const fetchServers = async () => {
       }
     }
   } catch (e) {
-    history.value.push({ type: 'system', text: '加载服务器列表失败。' })
+    if (!servers.value.length) {
+      const cached = loadServerCache()
+      if (cached.length) {
+        servers.value = cached
+      }
+    }
+    history.value.push({ type: 'system', text: '加载服务器列表失败，已使用本地缓存。' })
   }
 }
 
@@ -295,12 +333,27 @@ const scrollToBottom = () => {
 }
 
 onMounted(() => {
+  const cached = loadServerCache()
+  if (cached.length) {
+    servers.value = cached
+    if (!serverId.value) {
+      serverId.value = cached[0].id
+    }
+  }
+
   fetchServers().then(() => {
     connectTerminal()
   })
+
+  refreshTimer = setInterval(() => {
+    fetchServers()
+  }, 15000)
 })
 
 onUnmounted(() => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+  }
   if (socket.value && sessionId.value) {
     socket.value.emit('terminal_disconnect', { session_id: sessionId.value })
     socket.value.disconnect()
@@ -322,6 +375,14 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   font-weight: bold;
+}
+
+.toolbar-area {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
 }
 
 .terminal-window {
@@ -372,14 +433,8 @@ onUnmounted(() => {
   outline: none;
 }
 
-.server-input {
-  width: 120px;
-  margin-right: 8px;
-}
-
 .server-select {
   width: 300px;
-  margin-right: 8px;
 }
 
 .mt-20 {
