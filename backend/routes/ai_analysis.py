@@ -117,14 +117,20 @@ def _predict_multivariate_with_fallback(packet: dict):
         result = predictor.predict_multivariate(packet['series'], packet['timestamps'])
         normalized = _normalize_prediction(result)
         if not normalized.get('ok'):
-            return {'ok': False, 'message': normalized.get('message') or 'predictor returned not ok'}
+            fallback = _rule_based_prediction(packet)
+            fallback['source'] = 'fallback_rule_after_model_not_ok'
+            fallback['model_message'] = normalized.get('message') or 'predictor returned not ok'
+            return fallback
         return normalized
     except (FileNotFoundError, ImportError, OSError) as e:
         logger.warning('predictor unavailable, fallback to rule-based predictor: %s', e)
         return _rule_based_prediction(packet)
     except Exception as e:
         logger.exception('predictor runtime error: %s', e)
-        return {'ok': False, 'message': 'predictor runtime error'}
+        fallback = _rule_based_prediction(packet)
+        fallback['source'] = 'fallback_rule_after_runtime_error'
+        fallback['model_message'] = 'predictor runtime error'
+        return fallback
 
 
 def _predict_series_with_fallback(values):
@@ -133,7 +139,19 @@ def _predict_series_with_fallback(values):
         result = predictor.predict_series(values)
         normalized = _normalize_prediction(result)
         if not normalized.get('ok'):
-            return {'ok': False, 'message': normalized.get('message') or 'predictor returned not ok'}
+            try:
+                numbers = [float(v) for v in values]
+            except Exception:
+                return {'ok': False, 'message': normalized.get('message') or 'invalid values'}
+            score = max(numbers) / 100.0 if numbers else 0.0
+            return {
+                'ok': True,
+                'is_anomaly': bool(score >= 0.85),
+                'anomaly_score': round(float(score), 4),
+                'anomaly_type': 'series',
+                'source': 'fallback_rule_after_model_not_ok',
+                'model_message': normalized.get('message') or 'predictor returned not ok',
+            }
         return normalized
     except (FileNotFoundError, ImportError, OSError) as e:
         logger.warning('predictor unavailable for series, fallback to rule-based predictor: %s', e)
@@ -151,7 +169,19 @@ def _predict_series_with_fallback(values):
         }
     except Exception as e:
         logger.exception('predictor runtime error for series: %s', e)
-        return {'ok': False, 'message': 'predictor runtime error'}
+        try:
+            numbers = [float(v) for v in values]
+        except Exception:
+            return {'ok': False, 'message': 'invalid values'}
+        score = max(numbers) / 100.0 if numbers else 0.0
+        return {
+            'ok': True,
+            'is_anomaly': bool(score >= 0.85),
+            'anomaly_score': round(float(score), 4),
+            'anomaly_type': 'series',
+            'source': 'fallback_rule_after_runtime_error',
+            'model_message': 'predictor runtime error',
+        }
 
 
 def _load_server_metric_series(server_id: int, tenant_id: int, limit: int = 120):

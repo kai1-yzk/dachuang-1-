@@ -62,6 +62,13 @@ def _admin_only_guard():
     return ensure_role(request, {"tenant_admin", "platform_admin", "superadmin"})
 
 
+def _server_manage_guard():
+    role = (getattr(request, "user", {}) or {}).get("role")
+    if not role:
+        return jsonify({"code": 403, "message": "Forbidden: role is required", "data": None}), 403
+    return ensure_role(request, {"operator", "tenant_operator", "tenant_admin", "platform_admin", "superadmin"})
+
+
 @servers_bp.route("/", methods=["GET"])
 def list_all():
     tenant_id = get_request_tenant_id(request)
@@ -76,7 +83,7 @@ def list_all():
 
 @servers_bp.route("/", methods=["POST"])
 def create_or_update_ssh_server():
-    deny = _admin_only_guard()
+    deny = _server_manage_guard()
     if deny:
         return deny
 
@@ -189,7 +196,7 @@ def detail(server_id: int):
 
 @servers_bp.route("/<int:server_id>/ssh-config", methods=["PUT"])
 def update_ssh_config(server_id: int):
-    deny = _admin_only_guard()
+    deny = _server_manage_guard()
     if deny:
         return deny
 
@@ -262,7 +269,7 @@ def update_ssh_config(server_id: int):
 
 @servers_bp.route("/<int:server_id>/ssh-test", methods=["POST"])
 def test_ssh_connection(server_id: int):
-    deny = _admin_only_guard()
+    deny = _server_manage_guard()
     if deny:
         return deny
 
