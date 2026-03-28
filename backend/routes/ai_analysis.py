@@ -3,14 +3,18 @@ AI 分析与预测路由
 创建时间: 2026-03-24
 功能说明: 接收预处理后的数据并进行推理，以及提供自然语言运维命令校验
 """
+import logging
+
 from flask import Blueprint, jsonify, request
 from utils.security import validate_ai_command
 from services.command_risk_service import evaluate_risk, to_command
+from services.ai_explainer_service import build_explain
 from services.audit_service import write_audit_log
 from utils.db import execute_query
 from utils.security import get_request_tenant_id
 
 ai_bp = Blueprint('ai', __name__)
+logger = logging.getLogger(__name__)
 
 _PREDICTOR_CACHE = None
 _SERVERS_HAS_TENANT_ID = None
@@ -38,9 +42,17 @@ def _load_server_predictor():
     if str(model_module_path) not in sys.path:
         sys.path.append(str(model_module_path))
 
-    artifact = ai_engine_path / 'models' / 'server_anomaly_artifacts.pkl'
-    if not artifact.exists():
-        raise FileNotFoundError(f"model artifact not found: {artifact}")
+    artifact_candidates = [
+        ai_engine_path / 'models' / 'server_anomaly_artifacts.pkl',
+        ai_engine_path / 'models' / 'server_anomaly_artifacts.json',
+    ]
+    artifact = None
+    for candidate in artifact_candidates:
+        if candidate.exists():
+            artifact = candidate
+            break
+    if artifact is None:
+        raise FileNotFoundError("model artifact not found: server_anomaly_artifacts.(pkl|json)")
 
     predictor_module_file = model_module_path / 'server_anomaly_predictor.py'
     if not predictor_module_file.exists():
@@ -55,6 +67,91 @@ def _load_server_predictor():
 
     _PREDICTOR_CACHE = ServerAnomalyPredictor.load(artifact)
     return _PREDICTOR_CACHE
+
+
+def _rule_based_prediction(packet: dict):
+    series = (packet or {}).get('series') or {}
+    cpu_values = series.get('cpu_usage') or []
+    memory_values = series.get('memory_usage') or []
+    disk_values = series.get('disk_usage') or []
+    network_values = series.get('network_total') or []
+
+    cpu = float(cpu_values[-1] if cpu_values else 0.0)
+    memory = float(memory_values[-1] if memory_values else 0.0)
+    disk = float(disk_values[-1] if disk_values else 0.0)
+    network = float(network_values[-1] if network_values else 0.0)
+
+    score = max(cpu, memory, disk, min(network, 100.0)) / 100.0
+    is_anomaly = bool(cpu >= 85 or memory >= 85 or disk >= 90)
+    if cpu >= 90:
+        anomaly_type = 'cpu'
+    elif memory >= 90:
+        anomaly_type = 'memory'
+    elif disk >= 92:
+        anomaly_type = 'disk'
+    else:
+        anomaly_type = 'normal'
+
+    return {
+        'ok': True,
+        'is_anomaly': is_anomaly,
+        'anomaly_score': round(float(score), 4),
+        'anomaly_type': anomaly_type,
+        'source': 'fallback_rule',
+    }
+
+
+def _normalize_prediction(result: dict):
+    if not isinstance(result, dict):
+        return {'ok': False, 'message': 'predict result is invalid'}
+    normalized = dict(result)
+    normalized['ok'] = bool(normalized.get('ok', True))
+    normalized['is_anomaly'] = bool(normalized.get('is_anomaly', False))
+    normalized['anomaly_score'] = float(normalized.get('anomaly_score') or 0.0)
+    return normalized
+
+
+def _predict_multivariate_with_fallback(packet: dict):
+    try:
+        predictor = _load_server_predictor()
+        result = predictor.predict_multivariate(packet['series'], packet['timestamps'])
+        normalized = _normalize_prediction(result)
+        if not normalized.get('ok'):
+            return {'ok': False, 'message': normalized.get('message') or 'predictor returned not ok'}
+        return normalized
+    except (FileNotFoundError, ImportError, OSError) as e:
+        logger.warning('predictor unavailable, fallback to rule-based predictor: %s', e)
+        return _rule_based_prediction(packet)
+    except Exception as e:
+        logger.exception('predictor runtime error: %s', e)
+        return {'ok': False, 'message': 'predictor runtime error'}
+
+
+def _predict_series_with_fallback(values):
+    try:
+        predictor = _load_server_predictor()
+        result = predictor.predict_series(values)
+        normalized = _normalize_prediction(result)
+        if not normalized.get('ok'):
+            return {'ok': False, 'message': normalized.get('message') or 'predictor returned not ok'}
+        return normalized
+    except (FileNotFoundError, ImportError, OSError) as e:
+        logger.warning('predictor unavailable for series, fallback to rule-based predictor: %s', e)
+        try:
+            numbers = [float(v) for v in values]
+        except Exception:
+            return {'ok': False, 'message': 'invalid values'}
+        score = max(numbers) / 100.0 if numbers else 0.0
+        return {
+            'ok': True,
+            'is_anomaly': bool(score >= 0.85),
+            'anomaly_score': round(float(score), 4),
+            'anomaly_type': 'series',
+            'source': 'fallback_rule',
+        }
+    except Exception as e:
+        logger.exception('predictor runtime error for series: %s', e)
+        return {'ok': False, 'message': 'predictor runtime error'}
 
 
 def _load_server_metric_series(server_id: int, tenant_id: int, limit: int = 120):
@@ -171,21 +268,20 @@ def predict_anomaly():
     server_id = data.get('server_id')
 
     try:
-        predictor = _load_server_predictor()
-    except Exception as e:
-        return jsonify({"code": 500, "message": f"Model not ready: {str(e)}"}), 500
-
-    try:
         if server_id:
             packet = _load_server_metric_series(int(server_id), get_request_tenant_id(request), limit=120)
             if not packet:
                 return jsonify({"code": 404, "message": "No server metrics found"}), 404
-            result = predictor.predict_multivariate(packet['series'], packet['timestamps'])
+            result = _predict_multivariate_with_fallback(packet)
+            if not result.get('ok'):
+                return jsonify({"code": 422, "message": result.get('message') or 'Prediction data not sufficient'}), 422
         else:
             values = data.get('values') or data.get('features')
             if not values:
                 return jsonify({"code": 400, "message": "Missing values or server_id"}), 400
-            result = predictor.predict_series(values)
+            result = _predict_series_with_fallback(values)
+            if not result.get('ok'):
+                return jsonify({"code": 422, "message": result.get('message') or 'Prediction data not sufficient'}), 422
 
         return jsonify({
             "code": 200,
@@ -203,12 +299,13 @@ def predict_anomaly():
 def predict_server_anomaly(server_id: int):
     """按 server_id 从 server_metrics 读取最近数据并预测异常。"""
     try:
-        predictor = _load_server_predictor()
         packet = _load_server_metric_series(server_id, get_request_tenant_id(request), limit=120)
         if not packet:
             return jsonify({"code": 404, "message": "No server metrics found"}), 404
 
-        result = predictor.predict_multivariate(packet['series'], packet['timestamps'])
+        result = _predict_multivariate_with_fallback(packet)
+        if not result.get('ok'):
+            return jsonify({"code": 422, "message": result.get('message') or 'Prediction data not sufficient'}), 422
         return jsonify({
             "code": 200,
             "message": "Prediction Success",
@@ -224,13 +321,16 @@ def predict_server_anomaly(server_id: int):
 @ai_bp.route('/predict-alert/<int:server_id>', methods=['GET'])
 def predict_alert(server_id: int):
     try:
-        predictor = _load_server_predictor()
         packet = _load_server_metric_series(server_id, get_request_tenant_id(request), limit=120)
         if not packet:
             return jsonify({"code": 404, "message": "No server metrics found"}), 404
 
-        result = predictor.predict_multivariate(packet['series'], packet['timestamps'])
+        result = _predict_multivariate_with_fallback(packet)
+        if not result.get('ok'):
+            return jsonify({"code": 422, "message": result.get('message') or 'Prediction data not sufficient'}), 422
+
         alert = _build_alert_detail(packet, result)
+        explain = build_explain(alert, result, server_id)
 
         return jsonify({
             "code": 200,
@@ -239,6 +339,7 @@ def predict_alert(server_id: int):
                 "server_id": server_id,
                 **result,
                 "alert": alert,
+                "explain": explain,
             }
         })
     except Exception as e:

@@ -7,13 +7,29 @@ from utils.security import ensure_role
 services_bp = Blueprint("services", __name__)
 
 
+def _service_error_status(result: dict) -> int:
+    error_type = (result or {}).get("error_type")
+    if error_type == "not_found":
+        return 404
+    if error_type == "permission_denied":
+        return 403
+    if error_type == "manager_unavailable":
+        return 503
+    if error_type == "invalid_argument":
+        return 400
+    return 500
+
+
 @services_bp.route("/list", methods=["GET"])
 def service_list():
     server_id = request.args.get("server_id", type=int)
     if not server_id:
         return jsonify({"code": 400, "message": "server_id is required", "data": None}), 400
-    rows = list_services(server_id)
-    return jsonify({"code": 200, "message": "ok", "data": rows})
+    try:
+        rows = list_services(server_id)
+        return jsonify({"code": 200, "message": "ok", "data": rows})
+    except Exception as e:
+        return jsonify({"code": 500, "message": f"load service list failed: {str(e)}", "data": None}), 500
 
 
 @services_bp.route("/control", methods=["POST"])
@@ -43,7 +59,8 @@ def service_control():
         "result": "success" if result.get("ok") else "failed",
         "detail": result.get("message"),
     })
-    return jsonify({"code": 200 if result.get("ok") else 500, "message": result.get("message"), "data": result}), (200 if result.get("ok") else 500)
+    status_code = 200 if result.get("ok") else _service_error_status(result)
+    return jsonify({"code": status_code, "message": result.get("message"), "data": result}), status_code
 
 
 @services_bp.route("/autostart", methods=["POST"])
@@ -73,4 +90,5 @@ def service_autostart():
         "result": "success" if result.get("ok") else "failed",
         "detail": result.get("message"),
     })
-    return jsonify({"code": 200 if result.get("ok") else 500, "message": result.get("message"), "data": result}), (200 if result.get("ok") else 500)
+    status_code = 200 if result.get("ok") else _service_error_status(result)
+    return jsonify({"code": status_code, "message": result.get("message"), "data": result}), status_code

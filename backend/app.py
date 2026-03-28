@@ -12,6 +12,10 @@ import logging
 import secrets
 import os
 
+from utils.env_loader import load_local_env
+
+load_local_env()
+
 from routes.metrics import metrics_bp
 from routes.auth import auth_bp
 from routes.ai_analysis import ai_bp

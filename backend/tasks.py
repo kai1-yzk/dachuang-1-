@@ -1,7 +1,11 @@
 from celery import Celery
 import os
 import logging
+
+from utils.env_loader import load_local_env
 from utils.db import execute_query, execute_update
+
+load_local_env()
 
 logger = logging.getLogger(__name__)
 

@@ -18,6 +18,7 @@ COMMAND_WHITELIST = [
 PUBLIC_PATH_PREFIX = (
     '/api/auth',
     '/api/data/ingest',
+    '/api/data/stats',
     '/api/agents/register',
     '/api/agents/heartbeat',
     '/api/agents/metrics',

@@ -197,41 +197,41 @@ docker compose up -d
 
 ```bash
 curl -X POST http://localhost:5001/api/auth/login \
-	-H "Content-Type: application/json" \
-	-d '{"username":"admin","password":"admin123"}'
+ -H "Content-Type: application/json" \
+ -d '{"username":"admin","password":"admin123"}'
 ```
 
 ### 示例 2：接入 SSH 服务器
 
 ```bash
 curl -X POST http://localhost:5001/api/servers/ \
-	-H "Authorization: Bearer <ACCESS_TOKEN>" \
-	-H "Content-Type: application/json" \
-	-d '{
-		"hostname":"prod-web-1",
-		"ip":"192.168.1.10",
-		"port":22,
-		"auth_type":"password",
-		"ssh_username":"root",
-		"ssh_password":"your_password",
-		"connect_timeout":15
-	}'
+ -H "Authorization: Bearer <ACCESS_TOKEN>" \
+ -H "Content-Type: application/json" \
+ -d '{
+  "hostname":"prod-web-1",
+  "ip":"192.168.1.10",
+  "port":22,
+  "auth_type":"password",
+  "ssh_username":"root",
+  "ssh_password":"your_password",
+  "connect_timeout":15
+ }'
 ```
 
 ### 示例 3：查看监控大屏数据
 
 ```bash
 curl "http://localhost:5001/api/metrics/dashboard?collect_now=1&points=12" \
-	-H "Authorization: Bearer <ACCESS_TOKEN>"
+ -H "Authorization: Bearer <ACCESS_TOKEN>"
 ```
 
 ### 示例 4：操作服务（重启 nginx）
 
 ```bash
 curl -X POST http://localhost:5001/api/services/control \
-	-H "Authorization: Bearer <ACCESS_TOKEN>" \
-	-H "Content-Type: application/json" \
-	-d '{"server_id":1,"service_name":"nginx","action":"restart"}'
+ -H "Authorization: Bearer <ACCESS_TOKEN>" \
+ -H "Content-Type: application/json" \
+ -d '{"server_id":1,"service_name":"nginx","action":"restart"}'
 ```
 
 ### 示例 5：创建批量命令并审批
@@ -239,15 +239,15 @@ curl -X POST http://localhost:5001/api/services/control \
 ```bash
 # 1) 创建任务
 curl -X POST http://localhost:5001/api/batch/jobs \
-	-H "Authorization: Bearer <ACCESS_TOKEN>" \
-	-H "Content-Type: application/json" \
-	-d '{"command":"uptime","server_ids":[1,2]}'
+ -H "Authorization: Bearer <ACCESS_TOKEN>" \
+ -H "Content-Type: application/json" \
+ -d '{"command":"uptime","server_ids":[1,2]}'
 
 # 2) 审批执行
 curl -X POST http://localhost:5001/api/batch/jobs/1/approve \
-	-H "Authorization: Bearer <ACCESS_TOKEN>" \
-	-H "Content-Type: application/json" \
-	-d '{"approve":true}'
+ -H "Authorization: Bearer <ACCESS_TOKEN>" \
+ -H "Content-Type: application/json" \
+ -d '{"approve":true}'
 ```
 
 ### 示例 6：智能助手执行流程
@@ -255,15 +255,15 @@ curl -X POST http://localhost:5001/api/batch/jobs/1/approve \
 ```bash
 # 1) 生成执行方案
 curl -X POST http://localhost:5001/api/assistant/ops-plan \
-	-H "Authorization: Bearer <ACCESS_TOKEN>" \
-	-H "Content-Type: application/json" \
-	-d '{"command":"restart nginx","server_id":1}'
+ -H "Authorization: Bearer <ACCESS_TOKEN>" \
+ -H "Content-Type: application/json" \
+ -d '{"command":"restart nginx","server_id":1}'
 
 # 2) 确认执行
 curl -X POST http://localhost:5001/api/assistant/ops-execute \
-	-H "Authorization: Bearer <ACCESS_TOKEN>" \
-	-H "Content-Type: application/json" \
-	-d '{"execution_token":"<TOKEN>","consent":true,"high_risk_confirmed":true}'
+ -H "Authorization: Bearer <ACCESS_TOKEN>" \
+ -H "Content-Type: application/json" \
+ -d '{"execution_token":"<TOKEN>","consent":true,"high_risk_confirmed":true}'
 ```
 
 ## 核心接口清单（节选）
@@ -281,6 +281,30 @@ curl -X POST http://localhost:5001/api/assistant/ops-execute \
 
 ## 配置说明
 
+完整配置文档请先看：`docs/环境配置与自定义项.md`
+
+后端支持自动加载 `backend/.env`（也兼容 `backend/.ENV`）。建议先执行：
+
+```powershell
+cd backend
+copy .env.example .env
+# 然后编辑 .env，把 DB_PASSWORD 改成你的 MySQL 密码
+```
+
+如果你启动后端看到：
+
+`Access denied for user 'root'@'localhost' (using password: NO)`
+
+说明 `DB_PASSWORD` 没有设置。可在当前 PowerShell 会话先执行：
+
+```powershell
+$env:DB_HOST="127.0.0.1"
+$env:DB_PORT="3306"
+$env:DB_USER="root"
+$env:DB_PASSWORD="你的MySQL密码"
+$env:DB_NAME="aiops_db"
+```
+
 常用环境变量（后端）：
 
 - `JWT_SECRET_KEY`：JWT 密钥
@@ -289,6 +313,9 @@ curl -X POST http://localhost:5001/api/assistant/ops-execute \
 - `AUTO_COLLECT_ENABLED`：是否开启自动采集（默认 1）
 - `AUTO_COLLECT_INTERVAL_SECONDS`：自动采集周期秒数（默认 5）
 - `SSH_STRICT_HOST_KEY`：SSH 严格主机指纹校验开关
+- `DEEPSEEK_API_KEY`：DeepSeek API Key（仅后端读取）
+- `DEEPSEEK_BASE_URL`：DeepSeek API 地址（默认 `https://api.deepseek.com/v1`）
+- `DEEPSEEK_MODEL`：DeepSeek 模型（默认 `deepseek-chat`）
 
 ## 常见问题与排障
 

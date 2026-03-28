@@ -9,7 +9,7 @@ import jwt
 import datetime
 import bcrypt
 import re
-from utils.db import execute_query, execute_update
+from utils.db import execute_query, execute_update, is_db_available, get_last_db_error
 from utils.security import generate_short_code
 
 auth_bp = Blueprint('auth', __name__)
@@ -53,6 +53,10 @@ def validate_password(password):
 @auth_bp.route('/register', methods=['POST'])
 def register():
     try:
+        if not is_db_available():
+            logger.error("注册失败：数据库不可用，last_error=%s", get_last_db_error())
+            return jsonify({"code": 503, "message": "Database unavailable"}), 503
+
         data = request.get_json()
         if not data:
             logger.warning("Register called with empty JSON payload")
@@ -106,6 +110,9 @@ def register():
             return jsonify({"code": 200, "message": "Registration successful"}), 200
         else:
             logger.error("注册未影响任何行，affected=0 (username=%s, email=%s)", username, email)
+            if not is_db_available():
+                logger.error("注册写入失败后检测到数据库不可用，last_error=%s", get_last_db_error())
+                return jsonify({"code": 503, "message": "Database unavailable"}), 503
             return jsonify({"code": 500, "message": "Failed to register user"}), 500
     except Exception as e:
         logger.exception("Unhandled exception in register: %s", e)
@@ -114,12 +121,7 @@ def register():
 
 @auth_bp.route('/login', methods=['POST'])
 def login():
-    from app import limiter
-    
-    # 手动调用限流，因为我们在蓝图内，且为了适配不同的IP
-    limiter.limit("10 per 5 minute")(lambda: None)()
-    
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     username = data.get('username')
     password = data.get('password')
     
