@@ -118,6 +118,10 @@ const loadJobs = async () => {
 }
 
 const createJob = async () => {
+  if (!form.serverId) {
+    ElMessage.warning('请先接入并选择服务器')
+    return
+  }
   creating.value = true
   try {
     const res = await request.post('/backup/jobs', {
@@ -128,19 +132,29 @@ const createJob = async () => {
     if (res.code === 200) {
       ElMessage.success('备份任务已执行')
       await loadJobs()
+    } else {
+      ElMessage.error(res.message || '备份任务执行失败')
     }
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '备份任务执行失败')
   } finally {
     creating.value = false
   }
 }
 
 const doRestore = async () => {
-  const res = await request.post('/backup/restore', {
-    artifact_id: restore.artifactId,
-    confirm: restore.confirm,
-  })
-  if (res.code === 200) {
-    ElMessage.success('恢复任务已提交')
+  try {
+    const res = await request.post('/backup/restore', {
+      artifact_id: restore.artifactId,
+      confirm: restore.confirm,
+    })
+    if (res.code === 200) {
+      ElMessage.success('恢复任务已提交')
+    } else {
+      ElMessage.error(res.message || '恢复任务提交失败')
+    }
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '恢复任务提交失败')
   }
 }
 

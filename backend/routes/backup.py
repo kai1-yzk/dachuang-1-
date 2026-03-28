@@ -16,7 +16,7 @@ def backup_jobs_list():
 
 @backup_bp.route("/jobs", methods=["POST"])
 def backup_create_job():
-    deny = ensure_role(request, {"tenant_admin", "platform_admin", "superadmin"})
+    deny = ensure_role(request, {"tenant_admin", "tenant_operator", "platform_admin", "superadmin", "operator"})
     if deny:
         return deny
 
@@ -39,7 +39,7 @@ def backup_create_job():
 
 @backup_bp.route("/restore", methods=["POST"])
 def backup_restore():
-    deny = ensure_role(request, {"tenant_admin", "platform_admin", "superadmin"})
+    deny = ensure_role(request, {"tenant_admin", "tenant_operator", "platform_admin", "superadmin", "operator"})
     if deny:
         return deny
 

@@ -203,7 +203,7 @@ def ops_plan():
 
 @assistant_bp.route("/ops-execute", methods=["POST"])
 def ops_execute():
-    deny = ensure_role(request, {"tenant_admin", "platform_admin", "superadmin", "operator"})
+    deny = ensure_role(request, {"tenant_admin", "tenant_operator", "platform_admin", "superadmin", "operator"})
     if deny:
         return deny
 
@@ -223,9 +223,6 @@ def ops_execute():
     current_role = getattr(request, "user", {}).get("role", "operator")
     if pending.get("user_id") != current_user_id:
         return jsonify({"code": 403, "message": "token does not belong to current user", "data": None}), 403
-
-    if not _is_admin_role(current_role):
-        return jsonify({"code": 403, "message": "only admin can execute operation", "data": None}), 403
 
     if not consent:
         return jsonify({"code": 400, "message": "consent required before execution", "data": None}), 400

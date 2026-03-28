@@ -29,7 +29,7 @@ def file_read():
 
 @files_bp.route("/write", methods=["POST"])
 def file_write():
-    deny = ensure_role(request, {"tenant_admin", "platform_admin", "superadmin"})
+    deny = ensure_role(request, {"tenant_admin", "tenant_operator", "platform_admin", "superadmin", "operator"})
     if deny:
         return deny
 
@@ -47,7 +47,7 @@ def file_write():
 
 @files_bp.route("/mkdir", methods=["POST"])
 def file_mkdir():
-    deny = ensure_role(request, {"tenant_admin", "platform_admin", "superadmin"})
+    deny = ensure_role(request, {"tenant_admin", "tenant_operator", "platform_admin", "superadmin", "operator"})
     if deny:
         return deny
 
@@ -64,7 +64,7 @@ def file_mkdir():
 
 @files_bp.route("/delete", methods=["POST"])
 def file_delete():
-    deny = ensure_role(request, {"tenant_admin", "platform_admin", "superadmin"})
+    deny = ensure_role(request, {"tenant_admin", "tenant_operator", "platform_admin", "superadmin", "operator"})
     if deny:
         return deny
 

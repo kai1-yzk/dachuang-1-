@@ -122,33 +122,54 @@ const saveFile = async () => {
     ElMessage.warning('请选择文件')
     return
   }
-  const res = await request.post('/files/write', {
-    server_id: serverId.value,
-    path: activeFile.value,
-    content: content.value,
-  })
-  if (res.code === 200) ElMessage.success('保存成功')
+  try {
+    const res = await request.post('/files/write', {
+      server_id: serverId.value,
+      path: activeFile.value,
+      content: content.value,
+    })
+    if (res.code === 200) ElMessage.success('保存成功')
+    else ElMessage.error(res.message || '保存失败')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '保存失败')
+  }
 }
 
 const createDir = async () => {
-  const res = await request.post('/files/mkdir', { server_id: serverId.value, path: newDir.value })
-  if (res.code === 200) {
-    ElMessage.success('目录创建成功')
-    await loadList()
+  if (!newDir.value) {
+    ElMessage.warning('请输入目录路径')
+    return
+  }
+  try {
+    const res = await request.post('/files/mkdir', { server_id: serverId.value, path: newDir.value })
+    if (res.code === 200) {
+      ElMessage.success('目录创建成功')
+      await loadList()
+    } else {
+      ElMessage.error(res.message || '目录创建失败')
+    }
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '目录创建失败')
   }
 }
 
 const remove = async (row) => {
   const target = joinPath(path.value, row.name)
-  const res = await request.post('/files/delete', {
-    server_id: serverId.value,
-    path: target,
-    recursive: !!row.is_dir,
-    confirm: true,
-  })
-  if (res.code === 200) {
-    ElMessage.success('删除成功')
-    await loadList()
+  try {
+    const res = await request.post('/files/delete', {
+      server_id: serverId.value,
+      path: target,
+      recursive: !!row.is_dir,
+      confirm: true,
+    })
+    if (res.code === 200) {
+      ElMessage.success('删除成功')
+      await loadList()
+    } else {
+      ElMessage.error(res.message || '删除失败')
+    }
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '删除失败')
   }
 }
 

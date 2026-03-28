@@ -18,7 +18,7 @@ def service_list():
 
 @services_bp.route("/control", methods=["POST"])
 def service_control():
-    deny = ensure_role(request, {"tenant_admin", "platform_admin", "superadmin"})
+    deny = ensure_role(request, {"tenant_admin", "tenant_operator", "platform_admin", "superadmin", "operator"})
     if deny:
         return deny
 
@@ -48,7 +48,7 @@ def service_control():
 
 @services_bp.route("/autostart", methods=["POST"])
 def service_autostart():
-    deny = ensure_role(request, {"tenant_admin", "platform_admin", "superadmin"})
+    deny = ensure_role(request, {"tenant_admin", "tenant_operator", "platform_admin", "superadmin", "operator"})
     if deny:
         return deny
 

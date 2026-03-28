@@ -16,7 +16,7 @@ def batch_jobs():
 
 @batch_bp.route("/jobs", methods=["POST"])
 def batch_create():
-    deny = ensure_role(request, {"tenant_admin", "platform_admin", "superadmin"})
+    deny = ensure_role(request, {"tenant_admin", "tenant_operator", "platform_admin", "superadmin", "operator"})
     if deny:
         return deny
 
@@ -36,7 +36,7 @@ def batch_create():
 
 @batch_bp.route("/jobs/<int:job_id>/approve", methods=["POST"])
 def batch_approve(job_id: int):
-    deny = ensure_role(request, {"tenant_admin", "platform_admin", "superadmin"})
+    deny = ensure_role(request, {"tenant_admin", "tenant_operator", "platform_admin", "superadmin", "operator"})
     if deny:
         return deny
 

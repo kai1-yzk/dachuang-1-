@@ -111,7 +111,11 @@ const buildPlan = async () => {
     if (res.code === 200) {
       plan.value = res.data
       executionOutput.value = ''
+    } else {
+      ElMessage.error(res.message || '生成方案失败')
     }
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '生成方案失败')
   } finally {
     planning.value = false
   }
@@ -145,9 +149,13 @@ const executeWithConsent = async () => {
       const data = res.data || {}
       executionOutput.value = `exit_status=${data.exit_status}\n\n[stdout]\n${data.stdout || ''}\n\n[stderr]\n${data.stderr || ''}`
       ElMessage.success('命令执行完成')
+    } else {
+      executionOutput.value = res.message || '执行失败'
+      ElMessage.error(res.message || '执行失败')
     }
   } catch (e) {
     executionOutput.value = e?.response?.data?.message || '执行失败'
+    ElMessage.error(e?.response?.data?.message || '执行失败')
   } finally {
     executing.value = false
   }

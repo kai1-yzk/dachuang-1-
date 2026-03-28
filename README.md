@@ -1,59 +1,162 @@
-# 轻量化 AI 服务器运维防护系统
+# 轻量化智能运维防护平台
 
-面向中小企业的智能运维平台，支持多服务器接入、实时指标采集、AI 风险命令分析、分级权限控制和全链路审计。
+一个面向中小团队的全栈运维平台，聚焦「真实数据采集 + 安全控制 + 智能分析 + 可视化运维」。
 
-## 1. 功能概览
+系统支持 SSH 多服务器纳管、实时指标采集、服务控制、备份恢复、文件管理、批量命令审批、智能助手执行方案、WebSocket 终端以及 AI 故障预测，并提供审计闭环。
 
-- 多服务器管理：Agent 主动注册、心跳维持、在线状态追踪。
-- 指标采集：CPU、内存、磁盘、网络指标定时入库 MySQL。
-- 双模式终端：命令模式 + 自然语言模式（映射标准 Linux 命令）。
-- AI 风控：危险命令特征库 + 语法解析 + 风险分级。
-- 分级权限：`operator` 白名单执行；`superadmin` 高危操作需一次性短码。
-- 会话安全：15 分钟无操作自动超时。
-- 审计闭环：记录用户、命令、风险评分、执行结果、会话链路。
+## 项目描述
 
-## 2. 系统架构
+本项目以 Flask + Vue 3 为核心，构建了一个可直接落地的运维控制台：
 
-- 8 层架构图：`docs/architecture_8_layers.mmd`
-- 多服务器规划文档：`docs/multi_server_management_plan.md`
+- 前端采用控制台布局，操作路径统一。
+- 后端采用蓝图化 API 设计，支持多租户上下文与权限控制。
+- 指标数据来自受管服务器实时采集并入库，不依赖前端 mock。
+- 高风险操作具备确认机制与审计记录，支持追溯。
 
-核心组件：
-- 前端：`frontend/`（Vue 3 + Element Plus）
-- 后端：`backend/`（Flask + Flask-SocketIO + Celery）
-- 数据：MySQL + Redis
-- AI：`ai_engine/`（Isolation Forest + LSTM）
-- Agent：`agent/`（主动注册、心跳、指标上报）
+适用场景：
 
-## 3. 技术栈
+- 中小型业务集群的统一运维入口。
+- 需要终端运维但又要有审批、审计、风险拦截的团队。
+- 希望将传统人工巡检升级为可视化 + 自动化 + 智能化流程的项目。
 
-- Frontend：Vue 3、Vite、Element Plus、Axios、Socket.IO Client
-- Backend：Flask、Flask-SocketIO、PyJWT、Celery、Redis、PyMySQL
-- AI：PyTorch、Scikit-learn、Pandas、NumPy
-- Ops：Docker Compose、Gunicorn、Gevent
+## 功能介绍
 
-## 4. 目录结构
+### 1. 监控大屏
+
+- 展示 CPU、内存、磁盘、网络吞吐等核心指标。
+- 支持趋势图与周期筛选（近 1h / 6h / 24h / 自定义）。
+- 支持 AI 故障预测详情（故障类型、风险等级、起因、应急方案、预防建议）。
+- 支持 Kubernetes 概览（节点、Pod、Deployment 统计，基于服务器 `kubectl` 上下文）。
+
+### 2. 运维终端（WebSocket）
+
+- 实时会话交互，支持远程执行命令并回显。
+- 支持高风险二次确认流程。
+- 自动写入审计日志（命令输入、解析结果、执行状态）。
+
+### 3. 服务管理
+
+- 支持常见服务状态查询：`nginx/mysql/redis/docker/ssh/cron`。
+- 支持启动、停止、重启、自启动切换。
+- 命令执行具备系统兼容回退策略：`systemctl` -> `sudo -n systemctl` -> `service`。
+
+### 4. 备份恢复中心
+
+- 支持数据库备份和配置备份任务创建。
+- 支持备份产物恢复（带确认开关）。
+- 支持任务状态与执行结果查询。
+
+### 5. 文件管理器
+
+- 支持远程目录浏览、文件读取、在线编辑保存。
+- 支持新建目录、删除文件/目录（带确认参数）。
+
+### 6. 批量命令审批
+
+- 支持多服务器批量命令任务创建。
+- 支持审批通过后执行，记录每台服务器执行结果。
+
+### 7. 智能助手
+
+- 生成操作方案、风险评估、执行预期。
+- 经用户确认后触发实际命令执行。
+
+### 8. 多租户与安全审计
+
+- 租户上下文隔离（`tenant_id`）。
+- 角色鉴权（operator / tenant_operator / tenant_admin / platform_admin / superadmin）。
+- 审计日志覆盖关键操作链路。
+
+## 技术创新
+
+### 1. 真实采集闭环
+
+- 指标通过 SSH 从服务器实时采集并落库。
+- 大屏、趋势图、预测、审计使用同一真实数据源。
+
+### 2. 安全优先的执行链路
+
+- 高风险操作显式确认。
+- 批量命令带审批流程。
+- 全链路审计可追溯。
+
+### 3. 模块化后端扩展设计
+
+- Flask 蓝图拆分业务域：`auth / metrics / assistant / services / backup / files / batch / logs`。
+- 便于按模块扩展与隔离风险。
+
+### 4. 运维平台化能力聚合
+
+在单控制台内融合监控、终端、服务控制、备份恢复、文件管理、批量审批、智能助手，降低工具割裂成本。
+
+## 技术栈
+
+### 前端
+
+- Vue 3
+- Vite
+- Element Plus
+- ECharts
+- Axios
+- socket.io-client
+
+### 后端
+
+- Flask
+- Flask-SocketIO (gevent)
+- Flask-Limiter
+- PyJWT
+- Paramiko
+- Celery + Redis
+- PyMySQL
+
+### AI 与数据
+
+- PyTorch
+- scikit-learn
+- pandas / numpy
+
+### 运维与部署
+
+- Docker / Docker Compose
+- Gunicorn
+- Prometheus + Grafana（可选）
+
+## 目录结构
 
 ```text
-frontend/                 前端项目（登录、仪表盘、终端）
-backend/                  后端 API 与 WebSocket 服务
-backend/routes/           路由层（auth/ai/metrics/agents/audit/servers）
-backend/services/         业务服务层（agent/audit/risk）
-ai_engine/                训练与推理模型代码
-data_collector/           数据采集与预处理模块
-agent/                    受管服务器 agent 示例
-deploy/init.sql           数据库初始化脚本（含表结构与存储过程）
-docs/                     架构、部署、操作文档
+frontend/                 Vue 3 前端控制台
+backend/                  Flask 后端 API + SocketIO
+backend/routes/           路由蓝图
+backend/services/         业务服务
+backend/utils/            安全、DB、Redis 等工具
+ai_engine/                模型训练与推理代码
+data_collector/           数据采集预处理脚本
+deploy/init.sql           数据库初始化脚本
+docker-compose.yml        一键容器编排
+docs/                     架构与规划文档
 ```
 
-## 5. 快速开始
+## 安装指南
 
-### 5.1 初始化数据库
+## 方式 A：本地开发（推荐）
+
+### 1. 环境要求
+
+- Python 3.11（推荐）
+- Node.js 18+
+- MySQL 8.0+
+- Redis 6+
+
+> 说明：`scikit-learn==1.3.0` 在 Python 3.14 上构建兼容性较差，建议使用 Python 3.11 虚拟环境。
+
+### 2. 初始化数据库
 
 ```bash
 mysql -u root -p < deploy/init.sql
 ```
 
-### 5.2 启动后端
+### 3. 启动后端
 
 ```bash
 cd backend
@@ -61,14 +164,16 @@ pip install -r requirements.txt
 python app.py
 ```
 
-### 5.3 启动异步任务
+默认监听：`http://localhost:5001`
+
+### 4. 启动 Celery Worker（可选但推荐）
 
 ```bash
 cd backend
 celery -A tasks worker --loglevel=info
 ```
 
-### 5.4 启动前端
+### 5. 启动前端
 
 ```bash
 cd frontend
@@ -76,119 +181,151 @@ npm install
 npm run dev
 ```
 
-### 5.5 启动 Agent 示例
+默认访问：`http://localhost:3000`（或按你当前 Vite 配置端口）
+
+## 方式 B：Docker Compose
 
 ```bash
-cd agent
-pip install -r requirements.txt
-python agent_client.py
+docker compose up -d
 ```
 
-### 5.6 训练服务器异常预测模型
+默认包含：MySQL、Redis、Backend、Celery Worker、Frontend、Prometheus、Grafana。
+
+## 使用示例
+
+### 示例 1：登录获取 Token
 
 ```bash
-cd ai_engine
-python train.py --max-files 120
+curl -X POST http://localhost:5001/api/auth/login \
+	-H "Content-Type: application/json" \
+	-d '{"username":"admin","password":"admin123"}'
 ```
 
-训练完成后会生成：
-- `ai_engine/models/server_anomaly_artifacts.pkl`
-- `ai_engine/models/server_anomaly_artifacts.json`
+### 示例 2：接入 SSH 服务器
 
-## 6. API 与 WebSocket
-
-### 6.1 认证与会话
-
-- `POST /api/auth/register`
-- `POST /api/auth/login`
-- `POST /api/auth/refresh`
-- `POST /api/auth/logout`
-- `POST /api/auth/mfa/request-code`
-- `POST /api/auth/mfa/verify-code`
-
-### 6.2 Agent 接入
-
-- `POST /api/agents/register`
-- `POST /api/agents/heartbeat`
-- `POST /api/agents/metrics`
-- `GET /api/agents/servers`
-
-### 6.3 审计与服务器
-
-- `GET /api/audit/logs?limit=100`
-- `GET /api/servers/`
-- `GET /api/servers/{id}`
-- `PUT /api/servers/{id}/ssh-config`（配置 SSH 登录，支持 `password` / `key`）
-
-示例请求（密码登录）：
-
-```json
-{
-	"auth_type": "password",
-	"ssh_username": "root",
-	"ssh_password": "your_password",
-	"connect_timeout": 15
-}
+```bash
+curl -X POST http://localhost:5001/api/servers/ \
+	-H "Authorization: Bearer <ACCESS_TOKEN>" \
+	-H "Content-Type: application/json" \
+	-d '{
+		"hostname":"prod-web-1",
+		"ip":"192.168.1.10",
+		"port":22,
+		"auth_type":"password",
+		"ssh_username":"root",
+		"ssh_password":"your_password",
+		"connect_timeout":15
+	}'
 ```
 
-示例请求（密钥登录）：
+### 示例 3：查看监控大屏数据
 
-```json
-{
-	"auth_type": "key",
-	"ssh_username": "ubuntu",
-	"private_key": "-----BEGIN OPENSSH PRIVATE KEY-----...",
-	"private_key_passphrase": "optional",
-	"connect_timeout": 15
-}
+```bash
+curl "http://localhost:5001/api/metrics/dashboard?collect_now=1&points=12" \
+	-H "Authorization: Bearer <ACCESS_TOKEN>"
 ```
 
-### 6.4 终端 WebSocket 事件
+### 示例 4：操作服务（重启 nginx）
 
-客户端发送：
-- `terminal_connect`：携带 `token`、`server_id`
-- `terminal_command`：携带 `session_id`、`input`
-- `mfa_confirm`：携带 `session_id`、`code`
-- `terminal_disconnect`
+```bash
+curl -X POST http://localhost:5001/api/services/control \
+	-H "Authorization: Bearer <ACCESS_TOKEN>" \
+	-H "Content-Type: application/json" \
+	-d '{"server_id":1,"service_name":"nginx","action":"restart"}'
+```
 
-服务端返回：
-- `terminal_ready`
-- `terminal_output`
-- `mfa_required`
-- `mfa_result`
-- `terminal_timeout`
-- `terminal_error`
+### 示例 5：创建批量命令并审批
 
-### 6.5 AI 异常预测
+```bash
+# 1) 创建任务
+curl -X POST http://localhost:5001/api/batch/jobs \
+	-H "Authorization: Bearer <ACCESS_TOKEN>" \
+	-H "Content-Type: application/json" \
+	-d '{"command":"uptime","server_ids":[1,2]}'
 
-- `POST /api/ai/predict`：支持传 `server_id`（基于 `server_metrics` 预测）或传 `values`（单序列预测）
-- `GET /api/ai/predict/server/{id}`：按服务器 ID 读取最近指标并预测
+# 2) 审批执行
+curl -X POST http://localhost:5001/api/batch/jobs/1/approve \
+	-H "Authorization: Bearer <ACCESS_TOKEN>" \
+	-H "Content-Type: application/json" \
+	-d '{"approve":true}'
+```
 
-## 7. 安全设计
+### 示例 6：智能助手执行流程
 
-- JWT 身份校验 + 角色字段（`operator`/`superadmin`）。
-- 高危命令识别（`rm -rf`、`dd`、`fdisk`、`mkfs` 等）。
-- 超级用户高危命令必须通过一次性短码。
-- 所有关键行为写入 `audit_logs`。
-- 终端会话 15 分钟空闲超时。
+```bash
+# 1) 生成执行方案
+curl -X POST http://localhost:5001/api/assistant/ops-plan \
+	-H "Authorization: Bearer <ACCESS_TOKEN>" \
+	-H "Content-Type: application/json" \
+	-d '{"command":"restart nginx","server_id":1}'
 
-## 8. 性能目标
+# 2) 确认执行
+curl -X POST http://localhost:5001/api/assistant/ops-execute \
+	-H "Authorization: Bearer <ACCESS_TOKEN>" \
+	-H "Content-Type: application/json" \
+	-d '{"execution_token":"<TOKEN>","consent":true,"high_risk_confirmed":true}'
+```
 
-- 支持管理 >= 500 台服务器（多实例后端 + Redis + Celery）。
-- 命令响应时间 <= 3 秒（P99 目标）。
-- 指标采集延迟 <= 30 秒。
-- 系统可用性目标 99.9%。
+## 核心接口清单（节选）
 
-## 9. 文档清单
+- 认证：`/api/auth/*`
+- 监控：`/api/metrics/dashboard`、`/api/metrics/trend`、`/api/metrics/k8s-overview`
+- 服务器：`/api/servers/*`
+- 终端：WebSocket `terminal_connect / terminal_command / mfa_confirm`
+- 服务管理：`/api/services/list`、`/api/services/control`、`/api/services/autostart`
+- 日志中心：`/api/logs/search`、`/api/logs/anomaly-clusters`
+- 备份恢复：`/api/backup/jobs`、`/api/backup/restore`
+- 文件管理：`/api/files/list`、`/api/files/read`、`/api/files/write`、`/api/files/mkdir`、`/api/files/delete`
+- 批量审批：`/api/batch/jobs`、`/api/batch/jobs/{id}/approve`、`/api/batch/jobs/{id}/results`
+- 智能助手：`/api/assistant/query`、`/api/assistant/ops-plan`、`/api/assistant/ops-execute`
 
-- 部署指南：`docs/DEPLOYMENT.md`
-- 操作手册：`docs/OPERATION_MANUAL.md`
-- 功能规划：`docs/FEATURE_ROADMAP_NEXT.md`
+## 配置说明
+
+常用环境变量（后端）：
+
+- `JWT_SECRET_KEY`：JWT 密钥
+- `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME`
+- `REDIS_HOST` / `REDIS_PORT`
+- `AUTO_COLLECT_ENABLED`：是否开启自动采集（默认 1）
+- `AUTO_COLLECT_INTERVAL_SECONDS`：自动采集周期秒数（默认 5）
+- `SSH_STRICT_HOST_KEY`：SSH 严格主机指纹校验开关
+
+## 常见问题与排障
+
+### 1. 前端能打开但接口 401
+
+- 检查是否已登录并携带 `access_token`。
+- 检查 `JWT_SECRET_KEY` 是否被重置导致旧 token 失效。
+
+### 2. 服务控制失败
+
+- 确认目标服务器已接入并 SSH 可连接。
+- 确认目标系统具备 `systemctl` 或 `service`。
+- 确认账号权限允许操作服务。
+
+### 3. 备份/文件/批量功能不可用
+
+- 先确认有可用 `server_id`。
+- 检查路由返回的错误信息（前端已显示后端 message）。
+
+### 4. k8s 概览为空
+
+- 目标服务器未安装 `kubectl` 或未配置集群上下文。
+
+## 文档与规划
+
 - 功能规格：`Project_Functional_Specification.md`
+- 多服务器规划：`docs/multi_server_management_plan.md`
+- 架构图：`docs/architecture_8_layers.mmd`
 
-## 10. 注意事项
+## 贡献指南
 
-- 生产环境请使用环境变量管理密钥与数据库凭据。
-- `mfa/request-code` 在演示环境返回 `demo_code`，生产请接入短信/邮件网关。
-- Flask 内存限流适合单实例，生产建议切换 Redis 存储。
-- `SSH_STRICT_HOST_KEY=false` 时会自动接受未知主机指纹（便于测试）；生产建议开启严格模式。
+欢迎提交 Issue / PR。建议遵循：
+
+- 小步提交，单一变更目标。
+- 新增接口保持统一返回结构：`code/message/data`。
+- 涉及高风险行为时补齐审计与权限校验。
+
+## License
+
+当前仓库未显式声明 License，如需开源发布请补充许可证文件。

@@ -20,6 +20,16 @@ def _run(server_id: int, command: str, timeout: int = 20) -> Dict[str, Any]:
     }
 
 
+def _try_commands(server_id: int, commands: List[str], timeout: int = 20) -> Dict[str, Any]:
+    last = {"exit_status": 1, "stdout": "", "stderr": "no command executed"}
+    for cmd in commands:
+        run = _run(server_id, cmd, timeout=timeout)
+        last = run
+        if run.get("exit_status") == 0:
+            return run
+    return last
+
+
 def list_services(server_id: int) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for name in COMMON_SERVICES:
@@ -41,15 +51,47 @@ def list_services(server_id: int) -> List[Dict[str, Any]]:
 def control_service(server_id: int, service_name: str, action: str) -> Dict[str, Any]:
     if action not in {"start", "stop", "restart"}:
         return {"ok": False, "message": "invalid action"}
-    cmd = f"sudo systemctl {action} {service_name}"
-    run = _run(server_id, cmd)
+
+    names = [service_name]
+    if service_name == "ssh":
+        names.extend(["sshd", "ssh"])
+
+    commands = []
+    for name in names:
+        commands.extend([
+            f"systemctl {action} {name}",
+            f"sudo -n systemctl {action} {name}",
+            f"service {name} {action}",
+        ])
+
+    run = _try_commands(server_id, commands)
     ok = run.get("exit_status") == 0
-    return {"ok": ok, "message": "ok" if ok else "failed", "result": run}
+    return {
+        "ok": ok,
+        "message": "ok" if ok else (run.get("stderr") or run.get("stdout") or "failed"),
+        "result": run,
+    }
 
 
 def set_autostart(server_id: int, service_name: str, enabled: bool) -> Dict[str, Any]:
     action = "enable" if enabled else "disable"
-    cmd = f"sudo systemctl {action} {service_name}"
-    run = _run(server_id, cmd)
+
+    names = [service_name]
+    if service_name == "ssh":
+        names.extend(["sshd", "ssh"])
+
+    commands = []
+    for name in names:
+        commands.extend([
+            f"systemctl {action} {name}",
+            f"sudo -n systemctl {action} {name}",
+            f"chkconfig {name} {'on' if enabled else 'off'}",
+        ])
+
+    run = _try_commands(server_id, commands)
     ok = run.get("exit_status") == 0
-    return {"ok": ok, "message": "ok" if ok else "failed", "result": run}
+    return {
+        "ok": ok,
+        "message": "ok" if ok else (run.get("stderr") or run.get("stdout") or "failed"),
+        "result": run,
+    }

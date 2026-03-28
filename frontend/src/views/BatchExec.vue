@@ -118,23 +118,39 @@ const loadJobs = async () => {
 }
 
 const createJob = async () => {
-  const res = await request.post('/batch/jobs', {
-    command: command.value,
-    server_ids: selectedServers.value,
-  })
-  if (res.code === 200) {
-    ElMessage.success('任务已创建，等待审批')
-    command.value = ''
-    selectedServers.value = []
-    await loadJobs()
+  if (!command.value.trim() || !selectedServers.value.length) {
+    ElMessage.warning('请填写命令并选择目标服务器')
+    return
+  }
+  try {
+    const res = await request.post('/batch/jobs', {
+      command: command.value,
+      server_ids: selectedServers.value,
+    })
+    if (res.code === 200) {
+      ElMessage.success('任务已创建，等待审批')
+      command.value = ''
+      selectedServers.value = []
+      await loadJobs()
+    } else {
+      ElMessage.error(res.message || '任务创建失败')
+    }
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '任务创建失败')
   }
 }
 
 const approve = async (jobId, agree) => {
-  const res = await request.post(`/batch/jobs/${jobId}/approve`, { approve: agree })
-  if (res.code === 200) {
-    ElMessage.success(agree ? '审批通过并开始执行' : '任务已拒绝')
-    await loadJobs()
+  try {
+    const res = await request.post(`/batch/jobs/${jobId}/approve`, { approve: agree })
+    if (res.code === 200) {
+      ElMessage.success(agree ? '审批通过并开始执行' : '任务已拒绝')
+      await loadJobs()
+    } else {
+      ElMessage.error(res.message || '审批失败')
+    }
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '审批失败')
   }
 }
 

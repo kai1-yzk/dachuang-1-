@@ -1,5 +1,21 @@
 <template>
   <div class="panel-page">
+    <el-card shadow="hover" class="toolbar-card">
+      <template #header>
+        <div class="header-row">
+          <span>服务器接入</span>
+          <el-tag size="small" type="info">用于服务管理/备份/文件/批量执行</el-tag>
+        </div>
+      </template>
+      <el-form :inline="true" class="toolbar" @submit.prevent>
+        <el-input v-model="newServer.ip" placeholder="IP" style="width: 180px" />
+        <el-input-number v-model="newServer.port" :min="1" :max="65535" style="width: 120px" />
+        <el-input v-model="newServer.ssh_username" placeholder="SSH 用户" style="width: 140px" />
+        <el-input v-model="newServer.ssh_password" type="password" show-password placeholder="SSH 密码" style="width: 180px" />
+        <el-button type="primary" :loading="savingServer" @click="createServer">接入服务器</el-button>
+      </el-form>
+    </el-card>
+
     <el-card shadow="never" class="toolbar-card">
       <div class="toolbar">
         <el-select v-model="serverId" placeholder="选择服务器" style="width: 260px" @change="loadServices">
@@ -62,6 +78,8 @@ const serverId = ref(null)
 const services = ref([])
 const loading = ref(false)
 const role = ref('operator')
+const savingServer = ref(false)
+const newServer = ref({ ip: '', port: 22, ssh_username: '', ssh_password: '' })
 
 const canOperate = computed(() => ['tenant_admin', 'platform_admin', 'superadmin'].includes(role.value))
 
@@ -86,32 +104,80 @@ const loadServices = async () => {
   try {
     const res = await request.get('/services/list', { params: { server_id: serverId.value } })
     if (res.code === 200) services.value = res.data || []
+    else ElMessage.error(res.message || '加载服务状态失败')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '加载服务状态失败')
   } finally {
     loading.value = false
   }
 }
 
 const control = async (serviceName, action) => {
-  const res = await request.post('/services/control', {
-    server_id: serverId.value,
-    service_name: serviceName,
-    action,
-  })
-  if (res.code === 200) {
-    ElMessage.success(`${serviceName} ${action} 成功`)
-    await loadServices()
+  try {
+    const res = await request.post('/services/control', {
+      server_id: serverId.value,
+      service_name: serviceName,
+      action,
+    })
+    if (res.code === 200) {
+      ElMessage.success(`${serviceName} ${action} 成功`)
+      await loadServices()
+    } else {
+      ElMessage.error(res.message || `${serviceName} ${action} 失败`)
+    }
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || `${serviceName} ${action} 失败`)
   }
 }
 
 const setAutostart = async (serviceName, enabled) => {
-  const res = await request.post('/services/autostart', {
-    server_id: serverId.value,
-    service_name: serviceName,
-    enabled,
-  })
-  if (res.code === 200) {
-    ElMessage.success(`${serviceName} 自启已${enabled ? '开启' : '关闭'}`)
-    await loadServices()
+  try {
+    const res = await request.post('/services/autostart', {
+      server_id: serverId.value,
+      service_name: serviceName,
+      enabled,
+    })
+    if (res.code === 200) {
+      ElMessage.success(`${serviceName} 自启已${enabled ? '开启' : '关闭'}`)
+      await loadServices()
+    } else {
+      ElMessage.error(res.message || '修改自启失败')
+    }
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '修改自启失败')
+  }
+}
+
+const createServer = async () => {
+  if (!newServer.value.ip || !newServer.value.ssh_username || !newServer.value.ssh_password) {
+    ElMessage.warning('请填写 IP、SSH 用户与密码')
+    return
+  }
+  savingServer.value = true
+  try {
+    const res = await request.post('/servers/', {
+      hostname: newServer.value.ip,
+      ip: newServer.value.ip,
+      port: newServer.value.port,
+      auth_type: 'password',
+      ssh_username: newServer.value.ssh_username,
+      ssh_password: newServer.value.ssh_password,
+      connect_timeout: 15,
+    })
+    if (res.code === 200) {
+      const sid = res.data?.server_id
+      if (sid) {
+        await request.post(`/servers/${sid}/ssh-test`)
+      }
+      ElMessage.success('服务器接入成功')
+      newServer.value = { ip: '', port: 22, ssh_username: '', ssh_password: '' }
+      await loadServers()
+      await loadServices()
+    }
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '服务器接入失败')
+  } finally {
+    savingServer.value = false
   }
 }
 
