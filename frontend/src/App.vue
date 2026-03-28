@@ -1,35 +1,65 @@
 <template>
-  <el-container class="bt-layout" v-if="!isBlankLayout">
-    <el-aside width="230px" class="bt-aside">
-      <div class="bt-logo">
-        <div class="logo-dot"></div>
+  <div v-if="!isBlankLayout" class="shell-layout">
+    <aside class="shell-sidebar">
+      <div class="brand-panel">
+        <div class="brand-mark">AIOps</div>
         <div>
-          <div class="logo-title">AIOps Panel</div>
-          <div class="logo-sub">Enterprise Console</div>
+          <div class="brand-title">智能运维控制台</div>
+          <div class="brand-subtitle">观测、安全、执行一体化工作台</div>
         </div>
       </div>
 
-      <el-menu :default-active="route.path" class="bt-menu" router>
-        <el-menu-item index="/dashboard"><el-icon><DataLine /></el-icon><span>监控大屏</span></el-menu-item>
-        <el-menu-item index="/terminal"><el-icon><Monitor /></el-icon><span>终端</span></el-menu-item>
-        <el-menu-item index="/services"><el-icon><Operation /></el-icon><span>服务管理</span></el-menu-item>
-        <el-menu-item index="/logs"><el-icon><Document /></el-icon><span>日志中心</span></el-menu-item>
-        <el-menu-item index="/backup"><el-icon><Box /></el-icon><span>备份恢复</span></el-menu-item>
-        <el-menu-item index="/files"><el-icon><FolderOpened /></el-icon><span>文件管理</span></el-menu-item>
-        <el-menu-item index="/batch"><el-icon><Promotion /></el-icon><span>批量命令审批</span></el-menu-item>
-        <el-menu-item index="/assistant"><el-icon><ChatDotRound /></el-icon><span>智能助手</span></el-menu-item>
-        <el-menu-item index="/tenants"><el-icon><OfficeBuilding /></el-icon><span>租户管理</span></el-menu-item>
-      </el-menu>
-    </el-aside>
+      <div class="nav-groups">
+        <section v-for="group in navGroups" :key="group.label" class="nav-group">
+          <div class="nav-group__label">{{ group.label }}</div>
+          <button
+            v-for="item in group.items"
+            :key="item.path"
+            type="button"
+            :class="['nav-item', { 'is-active': route.path === item.path }]"
+            @click="router.push(item.path)"
+          >
+            <el-icon class="nav-item__icon">
+              <component :is="item.icon" />
+            </el-icon>
+            <span class="nav-item__copy">
+              <span class="nav-item__title">{{ item.label }}</span>
+              <span class="nav-item__desc">{{ item.description }}</span>
+            </span>
+          </button>
+        </section>
+      </div>
 
-    <el-container class="bt-main-wrap">
-      <el-header class="bt-header">
-        <div class="header-title-wrap">
-          <div class="header-title">运维控制台</div>
-          <div class="header-sub">实时监控 · 安全审计 · 自动化执行</div>
+      <div class="sidebar-foot">
+        <div class="sidebar-foot__title">运行状态</div>
+        <div :class="['status-pill', shellStatusClass]">
+          {{ shellStatusText }}
         </div>
-        <div class="header-actions">
-          <el-tag v-if="tenantContext" size="small" type="info">租户 #{{ tenantContext.tenant_id }} / {{ tenantContext.role }}</el-tag>
+        <div class="sidebar-foot__meta">当前租户 {{ tenantContext?.tenant_id ?? '--' }} / {{ tenantContext?.role ?? 'guest' }}</div>
+      </div>
+    </aside>
+
+    <div class="shell-main">
+      <header class="shell-header">
+        <div class="shell-header__copy">
+          <div class="shell-header__eyebrow">Enterprise AIOps Console</div>
+          <h1 class="shell-header__title">{{ currentTitle }}</h1>
+          <p class="shell-header__subtitle">{{ currentSubtitle }}</p>
+        </div>
+
+        <div class="shell-header__actions">
+          <div class="header-context surface-panel">
+            <div class="header-context__label">租户上下文</div>
+            <div class="header-context__value">
+              #{{ tenantContext?.tenant_id ?? '--' }} / {{ tenantContext?.role ?? '未识别' }}
+            </div>
+          </div>
+
+          <div class="action-row">
+            <el-button plain @click="router.push('/dashboard')">返回总览</el-button>
+            <el-button type="primary" @click="loadTenantContext">刷新上下文</el-button>
+          </div>
+
           <el-dropdown>
             <span class="user-entry">
               <el-avatar size="small">U</el-avatar>
@@ -38,30 +68,33 @@
             </span>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item @click="loadTenantContext">刷新租户信息</el-dropdown-item>
                 <el-dropdown-item divided @click="handleLogout">退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
         </div>
-      </el-header>
+      </header>
 
-      <el-main class="bt-main">
+      <main class="shell-content">
         <router-view v-slot="{ Component }">
-          <transition name="fade" mode="out-in">
+          <transition name="fade-slide" mode="out-in">
             <component :is="Component" />
           </transition>
         </router-view>
-      </el-main>
-    </el-container>
-  </el-container>
+      </main>
+    </div>
+  </div>
 
   <router-view v-else v-slot="{ Component }">
-    <transition name="fade" mode="out-in"><component :is="Component" /></transition>
+    <transition name="fade-slide" mode="out-in">
+      <component :is="Component" />
+    </transition>
   </router-view>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import request from './utils/request'
 
@@ -69,7 +102,50 @@ const route = useRoute()
 const router = useRouter()
 const tenantContext = ref(null)
 
+const navGroups = [
+  {
+    label: '总览',
+    items: [
+      { path: '/dashboard', label: '监控总览', description: '指标、预测、安全事件', icon: 'DataLine' },
+      { path: '/terminal', label: '运维终端', description: '实时执行与操作审计', icon: 'Monitor' },
+      { path: '/assistant', label: '智能助手', description: '先规划、再确认、后执行', icon: 'ChatDotRound' },
+    ],
+  },
+  {
+    label: '运营操作',
+    items: [
+      { path: '/services', label: '服务治理', description: '服务状态与自启动配置', icon: 'Operation' },
+      { path: '/logs', label: '日志中心', description: '审计搜索与异常聚类', icon: 'Document' },
+      { path: '/backup', label: '备份恢复', description: '任务、产物与回滚风险', icon: 'Box' },
+      { path: '/files', label: '文件工作台', description: '目录浏览与在线编辑', icon: 'FolderOpened' },
+      { path: '/batch', label: '批量审批', description: '批量命令的创建与审核', icon: 'Promotion' },
+    ],
+  },
+  {
+    label: '平台治理',
+    items: [
+      { path: '/tenants', label: '租户治理', description: '多租户上下文与隔离', icon: 'OfficeBuilding' },
+    ],
+  },
+]
+
 const isBlankLayout = computed(() => route.meta.layout === 'blank')
+const currentTitle = computed(() => route.meta.title || 'AIOps 控制台')
+const currentSubtitle = computed(() => route.meta.subtitle || '统一管理监控、安全和自动化执行')
+
+const shellStatusText = computed(() => {
+  if (!tenantContext.value) return '上下文未加载'
+  return ['tenant_admin', 'platform_admin', 'superadmin'].includes(tenantContext.value.role)
+    ? '管理员上下文已就绪'
+    : '只读 / 受控上下文'
+})
+
+const shellStatusClass = computed(() => {
+  if (!tenantContext.value) return 'status-pill--warning'
+  return ['tenant_admin', 'platform_admin', 'superadmin'].includes(tenantContext.value.role)
+    ? 'status-pill--success'
+    : 'status-pill--warning'
+})
 
 const handleLogout = async () => {
   try {
@@ -86,162 +162,298 @@ const handleLogout = async () => {
 const loadTenantContext = async () => {
   try {
     const res = await request.get('/tenants/context')
-    if (res.code === 200) {
-      tenantContext.value = res.data
-    }
+    tenantContext.value = res.code === 200 ? res.data : null
   } catch {
     tenantContext.value = null
   }
 }
+
+watch(() => route.path, () => {
+  if (!isBlankLayout.value) loadTenantContext()
+})
 
 onMounted(() => {
   loadTenantContext()
 })
 </script>
 
-<style>
-:root {
-  --bt-bg: #f4f7fb;
-  --bt-side: #0c172a;
-  --bt-side-2: #13243e;
-  --bt-primary: #2f7df6;
-  --bt-text: #1f2d3d;
+<style scoped>
+.shell-layout {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 290px minmax(0, 1fr);
+  gap: 18px;
+  padding: 18px;
 }
 
-html, body, #app {
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  font-family: 'Segoe UI', 'PingFang SC', sans-serif;
-  background-color: var(--bt-bg);
+.shell-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px;
+  border-radius: 30px;
+  background:
+    radial-gradient(circle at top, rgba(59, 130, 246, 0.2), transparent 34%),
+    linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(15, 23, 42, 0.92));
+  color: #dbeafe;
+  box-shadow: 0 28px 72px rgba(15, 23, 42, 0.36);
 }
 
-.bt-layout {
-  height: 100vh;
-}
-
-.bt-aside {
-  background: linear-gradient(180deg, var(--bt-side), var(--bt-side-2));
-  box-shadow: 4px 0 18px rgba(8, 16, 32, 0.35);
-}
-
-.bt-logo {
-  height: 72px;
+.brand-panel {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 16px;
+  gap: 14px;
+  padding: 10px 6px 20px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.brand-mark {
+  width: 54px;
+  height: 54px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.96), rgba(14, 165, 233, 0.88));
   color: #fff;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-weight: 800;
+  letter-spacing: 0.04em;
 }
 
-.logo-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #34d399;
-  box-shadow: 0 0 0 6px rgba(52, 211, 153, 0.18);
-}
-
-.logo-title {
-  font-weight: 700;
-  letter-spacing: 0.3px;
-}
-
-.logo-sub {
-  opacity: 0.75;
-  font-size: 12px;
-}
-
-.bt-menu {
-  border-right: none;
-  background: transparent;
-  --el-menu-bg-color: transparent;
-  --el-menu-text-color: #d5e1f7;
-  --el-menu-active-color: #ffffff;
-  --el-menu-hover-bg-color: rgba(10, 20, 37, 0.62);
-  padding: 8px;
-}
-
-.bt-menu .el-menu-item {
-  color: #d5e1f7;
-  border-radius: 8px;
-  margin-bottom: 4px;
-  height: 42px;
-  line-height: 42px;
-  font-weight: 500;
-}
-
-.bt-menu .el-menu-item:hover {
-  color: #ffffff;
-  background: rgba(10, 20, 37, 0.62);
-}
-
-.bt-menu .el-menu-item.is-active {
-  background: linear-gradient(90deg, rgba(47, 125, 246, 0.28), rgba(47, 125, 246, 0.12));
-  border: 1px solid rgba(126, 173, 255, 0.32);
-  color: #fff;
-}
-
-.bt-menu .el-menu-item .el-icon {
-  color: #a9bde2;
-}
-
-.bt-menu .el-menu-item.is-active .el-icon,
-.bt-menu .el-menu-item:hover .el-icon {
-  color: #ffffff;
-}
-
-.bt-main-wrap {
-  background: radial-gradient(circle at 0% 0%, #e8f0ff, #f4f7fb 28%);
-}
-
-.bt-header {
-  background: rgba(255, 255, 255, 0.82);
-  backdrop-filter: blur(8px);
-  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0 18px;
-}
-
-.header-title {
+.brand-title {
   font-size: 18px;
-  font-weight: 700;
-  color: var(--bt-text);
+  font-weight: 800;
+  color: #f8fafc;
 }
 
-.header-sub {
+.brand-subtitle {
+  margin-top: 4px;
   font-size: 12px;
-  color: #64748b;
+  color: rgba(219, 234, 254, 0.7);
 }
 
-.header-actions {
+.nav-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  flex: 1;
+}
+
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nav-group__label {
+  padding: 0 8px;
+  font-size: 12px;
+  color: rgba(191, 219, 254, 0.64);
+  letter-spacing: 0.08em;
+}
+
+.nav-item {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 12px;
+  padding: 14px 14px;
+  border: 1px solid transparent;
+  border-radius: 18px;
+  background: transparent;
+  color: #dbeafe;
+  cursor: pointer;
+  transition: transform var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.nav-item:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(148, 163, 184, 0.12);
+}
+
+.nav-item.is-active {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.24), rgba(14, 165, 233, 0.18));
+  border-color: rgba(96, 165, 250, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.nav-item__icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  color: #bfdbfe;
+}
+
+.nav-item__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+}
+
+.nav-item__title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #eff6ff;
+}
+
+.nav-item__desc {
+  font-size: 12px;
+  color: rgba(191, 219, 254, 0.7);
+}
+
+.sidebar-foot {
+  padding: 16px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.sidebar-foot__title {
+  font-size: 13px;
+  color: rgba(191, 219, 254, 0.72);
+  margin-bottom: 10px;
+}
+
+.sidebar-foot__meta {
+  margin-top: 10px;
+  color: rgba(219, 234, 254, 0.62);
+  font-size: 12px;
+}
+
+.shell-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.shell-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+  padding: 24px 28px;
+  border-radius: 30px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  backdrop-filter: blur(22px);
+  box-shadow: var(--shadow-sm);
+}
+
+.shell-header__eyebrow {
+  color: var(--app-primary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.shell-header__title {
+  margin: 8px 0 0;
+  font-size: clamp(26px, 2.8vw, 38px);
+  line-height: 1.06;
+}
+
+.shell-header__subtitle {
+  margin: 10px 0 0;
+  max-width: 680px;
+  color: var(--app-text-faint);
+  line-height: 1.7;
+}
+
+.shell-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.surface-panel {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.84);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.header-context__label {
+  font-size: 12px;
+  color: var(--app-text-faint);
+}
+
+.header-context__value {
+  margin-top: 6px;
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .user-entry {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.84);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  color: var(--app-text-soft);
   cursor: pointer;
-  color: #475569;
 }
 
-.bt-main {
-  padding: 16px 16px 20px;
+.shell-content {
+  min-width: 0;
 }
 
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s ease;
+.fade-slide-enter-active,
+.fade-slide-leave-active {
+  transition: opacity 0.24s ease, transform 0.24s ease;
 }
 
-.fade-enter-from,
-.fade-leave-to {
+.fade-slide-enter-from,
+.fade-slide-leave-to {
   opacity: 0;
+  transform: translateY(10px);
+}
+
+@media (max-width: 1280px) {
+  .shell-layout {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+
+  .nav-item__desc {
+    display: none;
+  }
+}
+
+@media (max-width: 980px) {
+  .shell-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .shell-sidebar {
+    border-radius: 26px;
+  }
+
+  .shell-header {
+    flex-direction: column;
+  }
+
+  .shell-header__actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .shell-layout {
+    padding: 12px;
+  }
+
+  .shell-sidebar,
+  .shell-header {
+    padding: 18px;
+  }
 }
 </style>

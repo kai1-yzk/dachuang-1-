@@ -1,9 +1,22 @@
 <template>
-  <div class="batch-page">
-    <el-row :gutter="16">
-      <el-col :span="9">
-        <el-card shadow="hover">
-          <template #header><span class="title">创建批量命令</span></template>
+  <div class="app-page">
+    <section class="page-hero">
+      <div class="page-hero__content">
+        <div class="page-eyebrow">Batch Approval</div>
+        <h2 class="page-title">让批量命令在审批、执行与结果之间保持可追踪</h2>
+        <p class="page-subtitle">通过统一审批流约束大范围命令执行，确保批量操作既高效，也具备可审计性。</p>
+      </div>
+      <div class="page-hero__aside">
+        <div class="hero-stat">
+          <div class="hero-stat__label">待展示任务</div>
+          <div class="hero-stat__value">{{ jobs.length }}</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="page-grid page-grid--sidebar">
+      <el-card class="section-card">
+        <template #header><span class="section-head__title">创建批量命令</span></template>
           <el-form label-width="90px">
             <el-form-item label="目标服务器">
               <el-select v-model="selectedServers" multiple collapse-tags placeholder="选择服务器" style="width: 100%">
@@ -16,13 +29,14 @@
             <el-button type="primary" :disabled="!canOperate" @click="createJob">提交审批</el-button>
           </el-form>
         </el-card>
-      </el-col>
 
-      <el-col :span="15">
-        <el-card shadow="hover">
+      <el-card class="section-card">
           <template #header>
-            <div class="header-line">
-              <span class="title">批量任务列表</span>
+            <div class="section-head">
+              <div>
+                <div class="section-head__title">批量任务列表</div>
+                <div class="section-head__meta">支持审批通过、拒绝以及执行结果回看</div>
+              </div>
               <el-button size="small" @click="loadJobs">刷新</el-button>
             </div>
           </template>
@@ -59,9 +73,8 @@
               </template>
             </el-table-column>
           </el-table>
-        </el-card>
-      </el-col>
-    </el-row>
+      </el-card>
+    </div>
 
     <el-dialog v-model="showResults" width="760px" title="任务执行结果">
       <el-table :data="results" size="small" max-height="460">
@@ -169,13 +182,4 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.title {
-  font-weight: 600;
-}
-
-.header-line {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
 </style>

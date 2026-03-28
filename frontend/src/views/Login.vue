@@ -1,11 +1,16 @@
 <template>
   <AuthLayout
     title="欢迎回来"
-    subtitle="登录你的账号以继续访问"
-    visual-title="轻量化 AI 运维防护系统"
-    visual-subtitle="以更低成本获得更强的安全与可观测性。"
+    subtitle="进入统一的 AIOps 控制台，继续你的监控、安全与自动化工作流。"
+    visual-title="让观测、风险拦截与执行协同发生"
+    visual-subtitle="从实时指标到安全审计，再到终端与批量执行，所有关键操作在一个界面里完成闭环。"
   >
-    <el-form :model="loginForm" :rules="rules" ref="loginFormRef" @keyup.enter="handleLogin">
+    <div class="auth-intro">
+      <div class="auth-pill">安全登录</div>
+      <div class="auth-hint">建议使用具备租户权限的账号进入控制台，以获得完整操作能力。</div>
+    </div>
+
+    <el-form :model="loginForm" :rules="rules" ref="loginFormRef" class="auth-form" @keyup.enter="handleLogin">
       <el-form-item prop="username">
         <el-input v-model="loginForm.username" placeholder="用户名" prefix-icon="User" />
       </el-form-item>
@@ -89,6 +94,31 @@ const handleLogin = async () => {
 </script>
 
 <style scoped>
+.auth-intro {
+  margin-bottom: 18px;
+}
+
+.auth-pill {
+  display: inline-flex;
+  padding: 7px 11px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.1);
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.auth-hint {
+  margin-top: 10px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.auth-form :deep(.el-form-item) {
+  margin-bottom: 18px;
+}
+
 .extra-actions {
   display: flex;
   justify-content: space-between;
@@ -97,6 +127,7 @@ const handleLogin = async () => {
 }
 .submit-btn {
   width: 100%;
+  min-height: 46px;
 }
 .footer-links {
   text-align: center;

@@ -1,48 +1,97 @@
 <template>
-  <div class="terminal-page">
-    <el-card shadow="hover" class="console-card">
-      <template #header>
-        <div class="head-row">
-          <div>
-            <div class="title">运维终端</div>
-            <div class="subtitle">SSH 实时执行与审计追踪</div>
+  <div class="app-page">
+    <section class="page-hero">
+      <div class="page-hero__content">
+        <div class="page-eyebrow">Secure Terminal</div>
+        <h2 class="page-title">在受控会话里执行命令，并持续留下审计痕迹</h2>
+        <p class="page-subtitle">
+          终端执行、安全校验、MFA 二次确认和审计留痕放在同一条链路里，既保留效率，也降低高危误操作风险。
+        </p>
+      </div>
+      <div class="page-hero__aside">
+        <div class="hero-stat">
+          <div class="hero-stat__label">目标服务器</div>
+          <div class="hero-stat__value">{{ serverId || '--' }}</div>
+        </div>
+        <div class="hero-stat">
+          <div class="hero-stat__label">审计记录</div>
+          <div class="hero-stat__value">{{ auditLogs.length }}</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="page-grid page-grid--sidebar">
+      <el-card class="section-card">
+        <template #header>
+          <div class="section-head">
+            <div>
+              <div class="section-head__title">运维终端</div>
+              <div class="section-head__meta">SSH 实时执行与命令审计联动</div>
+            </div>
           </div>
-          <el-space>
-            <el-select v-model="serverId" class="server-select" placeholder="选择服务器" @change="reconnectTerminal">
-              <el-option v-for="srv in servers" :key="srv.id" :label="`${srv.hostname} (${srv.ip}:${srv.port})`" :value="srv.id" />
-            </el-select>
-            <el-button @click="fetchServers">刷新列表</el-button>
+        </template>
+
+        <div class="stack-card compact">
+          <el-select v-model="serverId" class="server-select" placeholder="选择服务器" @change="reconnectTerminal">
+            <el-option v-for="srv in servers" :key="srv.id" :label="`${srv.hostname} (${srv.ip}:${srv.port})`" :value="srv.id" />
+          </el-select>
+          <div class="action-row">
+            <el-button plain @click="fetchServers">刷新列表</el-button>
             <el-button type="primary" @click="reconnectTerminal">重连终端</el-button>
-          </el-space>
+          </div>
+          <div class="status-list">
+            <div class="status-item">
+              <span>会话 ID</span>
+              <strong>{{ sessionId || '尚未建立' }}</strong>
+            </div>
+            <div class="status-item">
+              <span>命令缓冲</span>
+              <strong>{{ pendingCommand || '等待输入' }}</strong>
+            </div>
+          </div>
         </div>
-      </template>
+      </el-card>
 
-      <div class="terminal-window" ref="terminalWindow">
-        <div class="output-line" v-for="(line, index) in history" :key="index">
-          <span class="prompt" v-if="line.type === 'input'">root@ops:$</span>
-          <span :class="['content', line.type]">{{ line.text }}</span>
-        </div>
-      </div>
+      <div class="stack-card">
+        <el-card class="console-card">
+          <template #header>
+            <div class="section-head">
+              <div>
+                <div class="section-head__title">实时终端输出</div>
+                <div class="section-head__meta">当前会话输出、系统提示与拦截结果</div>
+              </div>
+            </div>
+          </template>
 
-      <div class="input-area">
-        <span class="prompt">root@ops:$</span>
-        <input
-          v-model="currentInput"
-          @keyup.enter="handleCommand"
-          class="cmd-input"
-          placeholder="输入命令，例如: systemctl status nginx"
-          autofocus
-        />
-      </div>
-    </el-card>
+          <div class="terminal-window" ref="terminalWindow">
+            <div class="output-line" v-for="(line, index) in history" :key="index">
+              <span class="prompt" v-if="line.type === 'input'">root@ops:$</span>
+              <span :class="['content', line.type]">{{ line.text }}</span>
+            </div>
+          </div>
 
-    <el-card shadow="hover" class="log-card mt-14">
-      <template #header>
-        <div class="head-row">
-          <span class="title">终端审计记录</span>
-        </div>
-      </template>
-      <el-table :data="auditLogs" size="small" style="width: 100%">
+          <div class="input-area">
+            <span class="prompt">root@ops:$</span>
+            <input
+              v-model="currentInput"
+              @keyup.enter="handleCommand"
+              class="cmd-input"
+              placeholder="输入命令，例如: systemctl status nginx"
+              autofocus
+            />
+          </div>
+        </el-card>
+
+        <el-card class="section-card">
+          <template #header>
+            <div class="section-head">
+              <div>
+                <div class="section-head__title">终端审计记录</div>
+                <div class="section-head__meta">展示原始输入、解析命令和放行 / 拦截结果</div>
+              </div>
+            </div>
+          </template>
+          <el-table :data="auditLogs" size="small" style="width: 100%">
         <el-table-column prop="time" label="执行时间" width="180" />
         <el-table-column prop="raw" label="输入命令" min-width="220" show-overflow-tooltip />
         <el-table-column prop="parsed" label="执行命令" min-width="220" show-overflow-tooltip />
@@ -52,7 +101,9 @@
           </template>
         </el-table-column>
       </el-table>
-    </el-card>
+        </el-card>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -185,40 +236,46 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.console-card,
-.log-card {
-  border-radius: 12px;
-}
-
-.head-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.title {
-  font-size: 16px;
-  font-weight: 700;
-}
-
-.subtitle {
-  color: #64748b;
-  font-size: 12px;
-  margin-top: 2px;
-}
-
 .server-select {
-  width: 320px;
+  width: 100%;
+}
+
+.status-list {
+  display: grid;
+  gap: 12px;
+}
+
+.status-item {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.82);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.status-item span {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.status-item strong {
+  font-size: 14px;
+  color: #0f172a;
 }
 
 .terminal-window {
-  background: #0b1220;
+  background:
+    radial-gradient(circle at top right, rgba(14, 165, 233, 0.12), transparent 24%),
+    #09111f;
   color: #d5dfef;
-  height: 360px;
+  height: 390px;
   overflow-y: auto;
-  padding: 14px;
+  padding: 18px;
   font-family: Consolas, 'Courier New', monospace;
-  border-radius: 8px;
+  border-radius: 20px;
+  border: 1px solid rgba(51, 65, 85, 0.72);
 }
 
 .output-line {
@@ -243,10 +300,11 @@ onUnmounted(() => {
 .input-area {
   display: flex;
   align-items: center;
-  background: #0b1220;
-  border-radius: 8px;
-  margin-top: 8px;
-  padding: 10px 12px;
+  background: #09111f;
+  border-radius: 18px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(51, 65, 85, 0.72);
 }
 
 .cmd-input {
@@ -257,9 +315,6 @@ onUnmounted(() => {
   font-family: Consolas, 'Courier New', monospace;
   font-size: 14px;
   outline: none;
-}
-
-.mt-14 {
-  margin-top: 14px;
+  min-width: 0;
 }
 </style>

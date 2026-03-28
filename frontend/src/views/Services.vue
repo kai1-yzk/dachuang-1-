@@ -1,41 +1,89 @@
 <template>
-  <div class="panel-page">
-    <el-card shadow="hover" class="toolbar-card">
-      <template #header>
-        <div class="header-row">
-          <span>服务器接入</span>
-          <el-tag size="small" type="info">用于服务管理/备份/文件/批量执行</el-tag>
-        </div>
-      </template>
-      <el-form :inline="true" class="toolbar" @submit.prevent>
-        <el-input v-model="newServer.ip" placeholder="IP" style="width: 180px" />
-        <el-input-number v-model="newServer.port" :min="1" :max="65535" style="width: 120px" />
-        <el-input v-model="newServer.ssh_username" placeholder="SSH 用户" style="width: 140px" />
-        <el-input v-model="newServer.ssh_password" type="password" show-password placeholder="SSH 密码" style="width: 180px" />
-        <el-button type="primary" :loading="savingServer" @click="createServer">接入服务器</el-button>
-      </el-form>
-    </el-card>
-
-    <el-card shadow="never" class="toolbar-card">
-      <div class="toolbar">
-        <el-select v-model="serverId" placeholder="选择服务器" style="width: 260px" @change="loadServices">
-          <el-option v-for="s in servers" :key="s.id" :label="`${s.hostname} (${s.ip})`" :value="s.id" />
-        </el-select>
-        <el-button @click="loadServices">刷新状态</el-button>
+  <div class="app-page">
+    <section class="page-hero">
+      <div class="page-hero__content">
+        <div class="page-eyebrow">Service Operations</div>
+        <h2 class="page-title">用一套工作流管理服务状态与服务器接入</h2>
+        <p class="page-subtitle">
+          将服务器接入、服务状态巡检、自启动切换和实例操作整合进一个操作平面，让高频运维动作更清晰、更可控。
+        </p>
       </div>
-    </el-card>
-
-    <el-card shadow="hover" class="mt16">
-      <template #header>
-        <div class="header-row">
-          <span>服务管理</span>
-          <el-tag type="info">支持 nginx/mysql/redis/docker/ssh/cron</el-tag>
+      <div class="page-hero__aside">
+        <div class="hero-stat">
+          <div class="hero-stat__label">已接入服务器</div>
+          <div class="hero-stat__value">{{ servers.length }}</div>
         </div>
-      </template>
-      <el-table :data="services" v-loading="loading" size="small">
-        <el-table-column prop="service_name" label="服务名" min-width="120" />
-        <el-table-column prop="status" label="当前状态" width="120">
-          <template #default="scope">
+        <div class="hero-stat">
+          <div class="hero-stat__label">当前服务数</div>
+          <div class="hero-stat__value">{{ services.length }}</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="page-grid page-grid--sidebar">
+      <div class="stack-card">
+        <el-card class="section-card">
+          <template #header>
+            <div class="section-head">
+              <div>
+                <div class="section-head__title">服务器接入</div>
+                <div class="section-head__meta">用于服务管理、备份恢复、文件编辑和批量执行</div>
+              </div>
+              <el-tag type="info" round>基础设施入口</el-tag>
+            </div>
+          </template>
+
+          <el-form class="stack-form" @submit.prevent>
+            <el-form-item label="IP 地址">
+              <el-input v-model="newServer.ip" placeholder="例如 10.0.0.8" />
+            </el-form-item>
+            <el-form-item label="SSH 端口">
+              <el-input-number v-model="newServer.port" :min="1" :max="65535" style="width: 100%" />
+            </el-form-item>
+            <el-form-item label="SSH 用户">
+              <el-input v-model="newServer.ssh_username" placeholder="root / ubuntu" />
+            </el-form-item>
+            <el-form-item label="SSH 密码">
+              <el-input v-model="newServer.ssh_password" type="password" show-password placeholder="输入 SSH 密码" />
+            </el-form-item>
+            <el-button type="primary" :loading="savingServer" @click="createServer">接入服务器</el-button>
+          </el-form>
+        </el-card>
+
+        <el-card class="section-card">
+          <template #header>
+            <div class="section-head">
+              <div>
+                <div class="section-head__title">当前工作上下文</div>
+                <div class="section-head__meta">先选择目标服务器，再加载服务状态</div>
+              </div>
+            </div>
+          </template>
+
+          <div class="stack-card compact">
+            <el-select v-model="serverId" placeholder="选择服务器" @change="loadServices">
+              <el-option v-for="s in servers" :key="s.id" :label="`${s.hostname} (${s.ip})`" :value="s.id" />
+            </el-select>
+            <el-button plain @click="loadServices">刷新状态</el-button>
+          </div>
+        </el-card>
+      </div>
+
+      <el-card class="section-card">
+        <template #header>
+          <div class="section-head">
+            <div>
+              <div class="section-head__title">服务管理</div>
+              <div class="section-head__meta">支持 nginx、mysql、redis、docker、ssh、cron 等常见系统服务</div>
+            </div>
+            <el-tag type="info" round>操作平面</el-tag>
+          </div>
+        </template>
+
+        <el-table :data="services" v-loading="loading" size="small">
+          <el-table-column prop="service_name" label="服务名" min-width="120" />
+          <el-table-column prop="status" label="当前状态" width="120">
+            <template #default="scope">
             <el-tag :type="scope.row.status === 'active' ? 'success' : 'danger'">{{ scope.row.status }}</el-tag>
           </template>
         </el-table-column>
@@ -62,9 +110,10 @@
               />
             </el-space>
           </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+          </el-table-column>
+        </el-table>
+      </el-card>
+    </section>
   </div>
 </template>
 
@@ -188,29 +237,19 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.panel-page {
+.stack-form :deep(.el-form-item) {
+  margin-bottom: 18px;
+}
+
+.stack-card.compact {
   display: flex;
   flex-direction: column;
+  gap: 14px;
 }
 
-.toolbar-card {
-  border-radius: 10px;
-}
-
-.toolbar {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-
-.mt16 {
-  margin-top: 16px;
-}
-
-.header-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-weight: 600;
+@media (max-width: 768px) {
+  .action-row {
+    justify-content: flex-start;
+  }
 }
 </style>

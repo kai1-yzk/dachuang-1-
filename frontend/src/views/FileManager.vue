@@ -1,11 +1,27 @@
 <template>
-  <div class="file-page">
-    <el-row :gutter="16">
-      <el-col :span="9">
-        <el-card shadow="hover">
+  <div class="app-page">
+    <section class="page-hero">
+      <div class="page-hero__content">
+        <div class="page-eyebrow">File Workspace</div>
+        <h2 class="page-title">浏览目录、在线编辑并执行文件级操作</h2>
+        <p class="page-subtitle">为高频配置修改场景提供一站式工作台，减少在 SSH 与编辑器之间切换的负担。</p>
+      </div>
+      <div class="page-hero__aside">
+        <div class="hero-stat">
+          <div class="hero-stat__label">当前目录</div>
+          <div class="hero-stat__value">{{ path }}</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="page-grid page-grid--sidebar file-layout">
+      <el-card class="section-card">
           <template #header>
-            <div class="header-line">
-              <span class="title">文件浏览</span>
+            <div class="section-head">
+              <div>
+                <div class="section-head__title">文件浏览</div>
+                <div class="section-head__meta">切换服务器与路径，浏览目录结构</div>
+              </div>
               <el-button size="small" @click="loadList">刷新</el-button>
             </div>
           </template>
@@ -32,14 +48,16 @@
               </template>
             </el-table-column>
           </el-table>
-        </el-card>
-      </el-col>
+      </el-card>
 
-      <el-col :span="15">
-        <el-card shadow="hover">
+      <div class="stack-card">
+        <el-card class="section-card">
           <template #header>
-            <div class="header-line">
-              <span class="title">在线编辑器</span>
+            <div class="section-head">
+              <div>
+                <div class="section-head__title">在线编辑器</div>
+                <div class="section-head__meta">读取并修改目标服务器上的文件内容</div>
+              </div>
               <el-space>
                 <el-input v-model="activeFile" placeholder="文件路径" style="width: 380px" />
                 <el-button :disabled="!canOperate" type="primary" @click="saveFile">保存</el-button>
@@ -49,15 +67,15 @@
           <el-input v-model="content" type="textarea" :rows="26" resize="none" />
         </el-card>
 
-        <el-card shadow="hover" class="mt16">
-          <template #header><span class="title">目录操作</span></template>
+        <el-card class="section-card">
+          <template #header><span class="section-head__title">目录操作</span></template>
           <el-space>
             <el-input v-model="newDir" placeholder="新目录路径" style="width: 340px" />
             <el-button :disabled="!canOperate" @click="createDir">新建目录</el-button>
           </el-space>
         </el-card>
-      </el-col>
-    </el-row>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -180,21 +198,11 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.title {
-  font-weight: 600;
-}
-
-.header-line {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
 .toolbox {
   margin-bottom: 10px;
 }
 
-.mt16 {
-  margin-top: 16px;
+.file-layout {
+  grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.2fr);
 }
 </style>

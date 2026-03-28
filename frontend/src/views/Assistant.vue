@@ -1,10 +1,23 @@
 <template>
-  <div class="assistant-page">
-    <el-row :gutter="16">
-      <el-col :span="8">
-        <el-card shadow="hover">
+  <div class="app-page">
+    <section class="page-hero">
+      <div class="page-hero__content">
+        <div class="page-eyebrow">Ops Assistant</div>
+        <h2 class="page-title">先生成执行方案，再让人确认并安全落地</h2>
+        <p class="page-subtitle">把命令规划、风险说明、二次确认和执行回显串成闭环，帮助你更放心地使用智能助手。</p>
+      </div>
+      <div class="page-hero__aside">
+        <div class="hero-stat">
+          <div class="hero-stat__label">目标服务器</div>
+          <div class="hero-stat__value">{{ serverId || '--' }}</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="page-grid page-grid--sidebar">
+      <el-card class="section-card">
           <template #header>
-            <div class="card-title">智能助手运维操作</div>
+            <div class="section-head__title">智能助手运维操作</div>
           </template>
 
           <el-form label-width="90px">
@@ -19,13 +32,14 @@
             <el-button type="primary" :loading="planning" @click="buildPlan">生成执行方案</el-button>
           </el-form>
         </el-card>
-      </el-col>
 
-      <el-col :span="16">
-        <el-card shadow="hover">
+      <el-card class="section-card">
           <template #header>
-            <div class="header-bar">
-              <span class="card-title">执行方案与确认</span>
+            <div class="section-head">
+              <div>
+                <div class="section-head__title">执行方案与确认</div>
+                <div class="section-head__meta">先理解风险，再决定是否执行</div>
+              </div>
               <el-tag v-if="plan" :type="riskTagType(plan.risk.level)">{{ plan.risk.level }}</el-tag>
             </div>
           </template>
@@ -59,8 +73,7 @@
 
           <el-empty v-else description="输入命令并生成方案后，确认是否执行" />
         </el-card>
-      </el-col>
-    </el-row>
+    </div>
   </div>
 </template>
 
@@ -172,23 +185,9 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.mt-16 {
-  margin-top: 16px;
-}
-
-.card-title {
-  font-weight: 600;
-}
-
 .section-title {
   font-weight: 600;
   margin-bottom: 8px;
-}
-
-.header-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
 }
 
 .action-row {

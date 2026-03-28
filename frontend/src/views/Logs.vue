@@ -1,12 +1,34 @@
 <template>
-  <div class="logs-page">
-    <el-row :gutter="16">
-      <el-col :span="16">
-        <el-card shadow="hover">
+  <div class="app-page">
+    <section class="page-hero">
+      <div class="page-hero__content">
+        <div class="page-eyebrow">Audit & Search</div>
+        <h2 class="page-title">搜索审计日志，并快速识别异常模式</h2>
+        <p class="page-subtitle">把命令日志、风险级别和异常聚类放进同一视图，帮助你更快定位危险操作与高频问题。</p>
+      </div>
+      <div class="page-hero__aside">
+        <div class="hero-stat">
+          <div class="hero-stat__label">日志条目</div>
+          <div class="hero-stat__value">{{ table.total }}</div>
+        </div>
+        <div class="hero-stat">
+          <div class="hero-stat__label">异常模式</div>
+          <div class="hero-stat__value">{{ clusters.length }}</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="page-grid page-grid--sidebar logs-layout">
+      <el-card class="section-card">
           <template #header>
-            <div class="header-row"><span>日志中心</span></div>
+            <div class="section-head">
+              <div>
+                <div class="section-head__title">日志中心</div>
+                <div class="section-head__meta">支持关键词、风险级别和服务器维度筛选</div>
+              </div>
+            </div>
           </template>
-          <el-form :inline="true" class="query-form">
+          <el-form :inline="true" class="filter-row query-form">
             <el-form-item label="关键词">
               <el-input v-model="query.keyword" placeholder="命令/详情" clearable />
             </el-form-item>
@@ -51,13 +73,16 @@
               @current-change="onPageChange"
             />
           </div>
-        </el-card>
-      </el-col>
+      </el-card>
 
-      <el-col :span="8">
-        <el-card shadow="hover">
+      <el-card class="section-card">
           <template #header>
-            <div class="header-row"><span>异常模式聚类</span></div>
+            <div class="section-head">
+              <div>
+                <div class="section-head__title">异常模式聚类</div>
+                <div class="section-head__meta">帮助你从重复风险中提炼操作模式</div>
+              </div>
+            </div>
           </template>
           <el-table :data="clusters" size="small" max-height="560">
             <el-table-column prop="pattern" label="模式" min-width="90" />
@@ -65,9 +90,8 @@
             <el-table-column prop="result" label="结果" width="90" />
             <el-table-column prop="count" label="数量" width="70" />
           </el-table>
-        </el-card>
-      </el-col>
-    </el-row>
+      </el-card>
+    </div>
   </div>
 </template>
 
@@ -138,16 +162,16 @@ onMounted(async () => {
 
 <style scoped>
 .query-form {
-  margin-bottom: 6px;
-}
-
-.header-row {
-  font-weight: 600;
+  margin-bottom: 8px;
 }
 
 .pager {
   margin-top: 14px;
   display: flex;
   justify-content: flex-end;
+}
+
+.logs-layout {
+  grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.9fr);
 }
 </style>

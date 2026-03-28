@@ -1,10 +1,16 @@
 <template>
   <AuthLayout
     title="创建账号"
-    subtitle="填写信息以开始使用"
-   
+    subtitle="创建账号后即可加入团队，获得统一的监控、安全与自动化运维入口。"
+    visual-title="在一个平台里连接团队、资产与操作流程"
+    visual-subtitle="从多租户协作到高危操作审批，把原本分散的运维动作放进同一条可信链路。"
   >
-    <el-form :model="regForm" :rules="rules" ref="regFormRef" @keyup.enter="handleRegister">
+    <div class="register-intro">
+      <div class="register-pill">新用户接入</div>
+      <div class="register-copy">注册后可通过租户上下文控制权限范围，平台会对关键操作保留审计记录。</div>
+    </div>
+
+    <el-form :model="regForm" :rules="rules" ref="regFormRef" class="register-form" @keyup.enter="handleRegister">
       <el-form-item prop="username">
         <el-input v-model="regForm.username" placeholder="用户名" prefix-icon="User" />
       </el-form-item>
@@ -112,9 +118,34 @@ const handleRegister = async () => {
 </script>
 
 <style scoped>
+.register-intro {
+  margin-bottom: 18px;
+}
+
+.register-pill {
+  display: inline-flex;
+  padding: 7px 11px;
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.1);
+  color: #0369a1;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.register-copy {
+  margin-top: 10px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.register-form :deep(.el-form-item) {
+  margin-bottom: 18px;
+}
+
 .submit-btn {
   width: 100%;
-  margin-top: 10px;
+  min-height: 46px;
 }
 .footer-links {
   text-align: center;

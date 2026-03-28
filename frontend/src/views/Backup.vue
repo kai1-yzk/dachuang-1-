@@ -1,9 +1,23 @@
 <template>
-  <div class="backup-page">
-    <el-row :gutter="16">
-      <el-col :span="8">
-        <el-card shadow="hover">
-          <template #header><div class="header-row">创建备份</div></template>
+  <div class="app-page">
+    <section class="page-hero">
+      <div class="page-hero__content">
+        <div class="page-eyebrow">Backup & Restore</div>
+        <h2 class="page-title">用受控流程管理备份任务与恢复动作</h2>
+        <p class="page-subtitle">把备份创建、恢复确认和任务跟踪放进同一页面，降低恢复场景下的信息切换成本。</p>
+      </div>
+      <div class="page-hero__aside">
+        <div class="hero-stat">
+          <div class="hero-stat__label">任务总数</div>
+          <div class="hero-stat__value">{{ jobs.length }}</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="page-grid page-grid--sidebar">
+      <div class="stack-card">
+        <el-card class="section-card">
+          <template #header><div class="section-head__title">创建备份</div></template>
           <el-form label-width="100px">
             <el-form-item label="目标服务器">
               <el-select v-model="form.serverId" placeholder="请选择">
@@ -23,8 +37,8 @@
           </el-form>
         </el-card>
 
-        <el-card shadow="hover" class="mt16">
-          <template #header><div class="header-row">恢复备份</div></template>
+        <el-card class="section-card">
+          <template #header><div class="section-head__title">恢复备份</div></template>
           <el-form label-width="100px">
             <el-form-item label="产物ID">
               <el-input-number v-model="restore.artifactId" :min="1" style="width: 100%" />
@@ -35,13 +49,15 @@
             <el-button type="danger" :disabled="!canOperate" @click="doRestore">执行恢复</el-button>
           </el-form>
         </el-card>
-      </el-col>
+      </div>
 
-      <el-col :span="16">
-        <el-card shadow="hover">
+      <el-card class="section-card">
           <template #header>
-            <div class="header-line">
-              <span class="header-row">备份任务列表</span>
+            <div class="section-head">
+              <div>
+                <div class="section-head__title">备份任务列表</div>
+                <div class="section-head__meta">查看任务状态、目标目录和更新时间</div>
+              </div>
               <el-button size="small" @click="loadJobs">刷新</el-button>
             </div>
           </template>
@@ -57,9 +73,8 @@
             </el-table-column>
             <el-table-column prop="updated_at" label="更新时间" width="180" />
           </el-table>
-        </el-card>
-      </el-col>
-    </el-row>
+      </el-card>
+    </div>
   </div>
 </template>
 
@@ -165,17 +180,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.mt16 {
-  margin-top: 16px;
-}
-
-.header-row {
-  font-weight: 600;
-}
-
-.header-line {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+.stack-card {
+  gap: 18px;
 }
 </style>

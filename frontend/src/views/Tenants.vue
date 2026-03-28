@@ -1,10 +1,24 @@
 <template>
-  <div class="tenants-page">
-    <el-row :gutter="16">
-      <el-col :span="8">
-        <el-card shadow="hover">
+  <div class="app-page">
+    <section class="page-hero">
+      <div class="page-hero__content">
+        <div class="page-eyebrow">Tenant Governance</div>
+        <h2 class="page-title">管理多租户空间，并保持权限上下文清晰可见</h2>
+        <p class="page-subtitle">租户视角决定了功能边界和操作范围，这里用统一视图管理租户空间与当前上下文。</p>
+      </div>
+      <div class="page-hero__aside">
+        <div class="hero-stat">
+          <div class="hero-stat__label">租户数量</div>
+          <div class="hero-stat__value">{{ tenants.length }}</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="page-grid page-grid--sidebar">
+      <div class="stack-card">
+        <el-card class="section-card">
           <template #header>
-            <div class="card-title">新建租户</div>
+            <div class="section-head__title">新建租户</div>
           </template>
           <el-form :model="form" label-width="80px">
             <el-form-item label="名称">
@@ -14,9 +28,9 @@
           </el-form>
         </el-card>
 
-        <el-card shadow="hover" class="mt-16">
+        <el-card class="section-card">
           <template #header>
-            <div class="card-title">当前上下文</div>
+            <div class="section-head__title">当前上下文</div>
           </template>
           <el-descriptions :column="1" border>
             <el-descriptions-item label="tenant_id">{{ context.tenant_id ?? '-' }}</el-descriptions-item>
@@ -24,13 +38,15 @@
           </el-descriptions>
           <el-button class="mt-12" size="small" @click="loadContext">刷新上下文</el-button>
         </el-card>
-      </el-col>
+      </div>
 
-      <el-col :span="16">
-        <el-card shadow="hover">
+      <el-card class="section-card">
           <template #header>
-            <div class="header-bar">
-              <span class="card-title">租户列表</span>
+            <div class="section-head">
+              <div>
+                <div class="section-head__title">租户列表</div>
+                <div class="section-head__meta">展示租户状态与创建时间</div>
+              </div>
               <el-button size="small" @click="loadTenants">刷新</el-button>
             </div>
           </template>
@@ -42,8 +58,7 @@
             <el-table-column prop="created_at" label="创建时间" min-width="180" />
           </el-table>
         </el-card>
-      </el-col>
-    </el-row>
+    </div>
   </div>
 </template>
 
@@ -95,21 +110,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.mt-16 {
-  margin-top: 16px;
-}
-
 .mt-12 {
   margin-top: 12px;
-}
-
-.card-title {
-  font-weight: 600;
-}
-
-.header-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
 }
 </style>
