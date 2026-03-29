@@ -148,21 +148,25 @@ INSERT INTO tenants (id, name, status)
 VALUES (1, 'default-tenant', 'active')
 ON DUPLICATE KEY UPDATE name=VALUES(name), status=VALUES(status);
 
+-- ---------------- 以下是修改后的 ALTER TABLE 语句 ----------------
+
 ALTER TABLE `user`
-    ADD COLUMN IF NOT EXISTS `tenant_id` BIGINT UNSIGNED NOT NULL DEFAULT 1 AFTER `role_name`,
-    ADD INDEX IF NOT EXISTS `idx_user_tenant` (`tenant_id`);
+    ADD COLUMN `tenant_id` BIGINT UNSIGNED NOT NULL DEFAULT 1 AFTER `role_name`,
+    ADD INDEX `idx_user_tenant` (`tenant_id`);
 
 ALTER TABLE `servers`
-    ADD COLUMN IF NOT EXISTS `tenant_id` BIGINT UNSIGNED NOT NULL DEFAULT 1 AFTER `id`,
-    ADD INDEX IF NOT EXISTS `idx_server_tenant` (`tenant_id`);
+    ADD COLUMN `tenant_id` BIGINT UNSIGNED NOT NULL DEFAULT 1 AFTER `id`,
+    ADD INDEX `idx_server_tenant` (`tenant_id`);
 
 ALTER TABLE `audit_logs`
-    ADD COLUMN IF NOT EXISTS `trace_id` VARCHAR(64) NULL AFTER `session_id`,
-    ADD COLUMN IF NOT EXISTS `incident_id` BIGINT UNSIGNED NULL AFTER `trace_id`;
+    ADD COLUMN `trace_id` VARCHAR(64) NULL AFTER `session_id`,
+    ADD COLUMN `incident_id` BIGINT UNSIGNED NULL AFTER `trace_id`;
 
 ALTER TABLE `server_metrics`
-    ADD COLUMN IF NOT EXISTS `collector_status` VARCHAR(20) NOT NULL DEFAULT 'ok' AFTER `metric_payload`,
-    ADD COLUMN IF NOT EXISTS `collector_error` TEXT NULL AFTER `collector_status`;
+    ADD COLUMN `collector_status` VARCHAR(20) NOT NULL DEFAULT 'ok' AFTER `metric_payload`,
+    ADD COLUMN `collector_error` TEXT NULL AFTER `collector_status`;
+
+-- -------------------------------------------------------------------
 
 DROP TABLE IF EXISTS `runbook_execution_steps`;
 DROP TABLE IF EXISTS `runbook_executions`;

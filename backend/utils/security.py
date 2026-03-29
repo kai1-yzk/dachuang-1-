@@ -16,6 +16,8 @@ COMMAND_WHITELIST = [
 ]
 
 PUBLIC_PATH_PREFIX = (
+    '/api/health',
+    '/api/system/dependencies',
     '/api/auth',
     '/api/data/ingest',
     '/api/data/stats',

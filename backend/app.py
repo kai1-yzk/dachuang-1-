@@ -11,8 +11,12 @@ from flask_socketio import SocketIO
 import logging
 import secrets
 import os
+from typing import Dict, Any
 
 from utils.env_loader import load_local_env
+from utils.db import is_db_available, get_last_db_error
+from utils.redis_client import redis_client
+from tasks import celery_app
 
 load_local_env()
 
@@ -50,9 +54,127 @@ limiter = Limiter(
 
 socketio = SocketIO(cors_allowed_origins="*", async_mode="gevent")
 
+_WEAK_SECRET_VALUES = {
+    "replace_with_a_long_random_secret",
+    "replace_with_your_private_secret",
+    "super_secret_aiops_key",
+    "default",
+    "changeme",
+    "123456",
+    "admin",
+}
+
+
+def _is_production() -> bool:
+    return str(os.environ.get("ENV", "development")).strip().lower() == "production"
+
+
+def _build_dependency_status() -> Dict[str, Any]:
+    status: Dict[str, Any] = {
+        "database": {
+            "ok": False,
+            "error_code": "DB_UNAVAILABLE",
+            "message": "Database not checked",
+            "hint": "检查 DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME 配置与数据库可达性",
+        },
+        "redis": {
+            "ok": False,
+            "error_code": "REDIS_UNAVAILABLE",
+            "message": "Redis not checked",
+            "hint": "检查 REDIS_HOST/REDIS_PORT/REDIS_PASSWORD 配置与 Redis 服务状态",
+        },
+        "celery_broker": {
+            "ok": False,
+            "error_code": "CELERY_BROKER_UNAVAILABLE",
+            "message": "Celery broker not checked",
+            "hint": "检查 Celery broker 配置与 Redis 连通性",
+        },
+    }
+
+    db_ok = is_db_available()
+    status["database"]["ok"] = db_ok
+    if db_ok:
+        status["database"]["error_code"] = None
+        status["database"]["message"] = "Database connection healthy"
+        status["database"]["hint"] = None
+    else:
+        status["database"]["message"] = get_last_db_error() or "Database connection failed"
+
+    try:
+        if redis_client is None:
+            raise RuntimeError("Redis client not initialized")
+        redis_client.ping()
+        status["redis"]["ok"] = True
+        status["redis"]["error_code"] = None
+        status["redis"]["message"] = "Redis connection healthy"
+        status["redis"]["hint"] = None
+    except Exception as exc:
+        status["redis"]["message"] = str(exc)
+
+    broker_url = str(celery_app.conf.get("broker_url") or "")
+    if broker_url.startswith("redis://"):
+        if status["redis"]["ok"]:
+            status["celery_broker"]["ok"] = True
+            status["celery_broker"]["error_code"] = None
+            status["celery_broker"]["message"] = "Celery broker(redis) inferred healthy"
+            status["celery_broker"]["hint"] = None
+        else:
+            status["celery_broker"]["message"] = "Celery broker(redis) unavailable because Redis is unavailable"
+    else:
+        status["celery_broker"]["message"] = "Celery broker quick-check only supports redis:// broker"
+
+    return status
+
+
+def _validate_bootstrap_config() -> None:
+    missing = []
+    for key in ("DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME"):
+        value = str(os.environ.get(key, "")).strip()
+        if not value:
+            missing.append(key)
+
+    if missing:
+        logger.warning(
+            "Startup preflight: missing required DB env vars: %s. "
+            "请在 backend/.env 配置后重启服务。",
+            ",".join(missing),
+        )
+
+    jwt_secret = str(os.environ.get("JWT_SECRET_KEY", "")).strip()
+    aiops_secret = str(os.environ.get("AIOPS_SECRET_KEY", "")).strip()
+
+    if _is_production():
+        if not jwt_secret:
+            raise RuntimeError(
+                "SECURITY_CONFIG_ERROR: missing JWT_SECRET_KEY in production. "
+                "请设置强随机密钥后再启动。"
+            )
+        if not aiops_secret:
+            raise RuntimeError(
+                "SECURITY_CONFIG_ERROR: missing AIOPS_SECRET_KEY in production. "
+                "请设置强随机密钥后再启动。"
+            )
+        if jwt_secret in _WEAK_SECRET_VALUES or aiops_secret in _WEAK_SECRET_VALUES:
+            raise RuntimeError(
+                "SECURITY_CONFIG_ERROR: weak default secret detected in production. "
+                "请替换为强随机密钥后再启动。"
+            )
+    else:
+        if not jwt_secret:
+            logger.warning(
+                "JWT_SECRET_KEY 未设置，开发模式将使用临时随机密钥。"
+                "重启后旧 token 会失效，建议在 backend/.env 固定配置。"
+            )
+        if not aiops_secret or aiops_secret in _WEAK_SECRET_VALUES:
+            logger.warning(
+                "AIOPS_SECRET_KEY 未设置或为弱值。开发环境可运行，但生产环境必须设置强随机密钥。"
+            )
+
 def create_app():
     """创建并配置 Flask 应用"""
     app = Flask(__name__)
+
+    _validate_bootstrap_config()
     
     # CORS 白名单
     CORS(app, resources={r"/api/*": {"origins": ["http://localhost:3000", "https://yourdomain.com"]}}, supports_credentials=True)
@@ -63,6 +185,33 @@ def create_app():
     
     # 随机生成 256-bit (32 bytes) 密钥，或使用环境变量
     app.config['JWT_SECRET_KEY'] = os.environ.get("JWT_SECRET_KEY", secrets.token_hex(32))
+
+    @app.get('/api/health')
+    def health_check():
+        dependency_status = _build_dependency_status()
+        all_ok = all(dep.get("ok") for dep in dependency_status.values())
+        response = {
+            "code": 200 if all_ok else 503,
+            "message": "ok" if all_ok else "degraded",
+            "data": {
+                "status": "healthy" if all_ok else "degraded",
+                "dependencies": dependency_status,
+            },
+        }
+        return jsonify(response), (200 if all_ok else 503)
+
+    @app.get('/api/system/dependencies')
+    def dependencies_status():
+        dependency_status = _build_dependency_status()
+        all_ok = all(dep.get("ok") for dep in dependency_status.values())
+        return jsonify({
+            "code": 200,
+            "message": "success",
+            "data": {
+                "overall_ok": all_ok,
+                "dependencies": dependency_status,
+            },
+        }), 200
     
     # 注册中间件
     @app.before_request
