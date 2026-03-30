@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 # 初始化 Limiter
 limiter = Limiter(
     key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"],
+    default_limits=["1000 per day", "500 per hour", "100 per minute"],
     storage_uri="memory://"
 )
 

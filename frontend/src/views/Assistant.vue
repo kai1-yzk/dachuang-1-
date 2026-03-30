@@ -26,8 +26,13 @@
                 <el-option v-for="srv in servers" :key="srv.id" :label="`${srv.hostname} (${srv.ip})`" :value="srv.id" />
               </el-select>
             </el-form-item>
-            <el-form-item label="操作命令">
-              <el-input v-model="commandText" type="textarea" :rows="6" placeholder="例如：systemctl restart nginx" />
+            <el-form-item label="运维需求">
+              <el-input
+                v-model="commandText"
+                type="textarea"
+                :rows="6"
+                placeholder="可用自然语言描述意图，或直接写命令。例如：查看磁盘占用 / df -h"
+              />
             </el-form-item>
             <el-button type="primary" :loading="planning" @click="buildPlan">生成执行方案</el-button>
           </el-form>
@@ -45,7 +50,25 @@
           </template>
 
           <div v-if="plan">
+            <el-alert
+              v-if="plan.ai_source === 'fallback'"
+              type="warning"
+              :closable="false"
+              title="当前未配置大模型 API 密钥（DEEPSEEK_API_KEY 或 AI_API_KEY），以下为本地模板方案；配置密钥后可由 AI 生成命令与步骤。"
+              show-icon
+              class="mb-16"
+            />
             <el-alert type="info" :closable="false" :title="plan.ask" show-icon />
+
+            <div v-if="plan.solution?.resolved_command" class="section-title mt-16">解析后的执行命令</div>
+            <el-input
+              v-if="plan.solution?.resolved_command"
+              :model-value="plan.solution.resolved_command"
+              type="textarea"
+              :rows="2"
+              readonly
+              class="mb-16"
+            />
 
             <div class="section-title mt-16">解决方法（执行步骤）</div>
             <el-steps direction="vertical" :active="plan.solution.steps.length">
@@ -101,8 +124,9 @@ const loadServers = async () => {
 }
 
 const riskTagType = (level) => {
-  if (level === 'high') return 'danger'
-  if (level === 'medium') return 'warning'
+  const l = String(level || '').toLowerCase()
+  if (l === 'high') return 'danger'
+  if (l === 'medium') return 'warning'
   return 'success'
 }
 
@@ -193,5 +217,13 @@ onMounted(() => {
 .action-row {
   display: flex;
   gap: 10px;
+}
+
+.mt-16 {
+  margin-top: 16px;
+}
+
+.mb-16 {
+  margin-bottom: 16px;
 }
 </style>

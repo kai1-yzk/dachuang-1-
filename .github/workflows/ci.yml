@@ -41,12 +41,14 @@ jobs:
         npm run build
 
     - name: Set up JDK 17
+      if: ${{ hashFiles('java_processor/**') != '' }}
       uses: actions/setup-java@v3
       with:
         java-version: '17'
         distribution: 'temurin'
 
     - name: Build Java Processor
+      if: ${{ hashFiles('java_processor/**') != '' }}
       run: |
         cd java_processor
         if [ -f mvnw ]; then ./mvnw clean package -DskipTests; else mvn clean package -DskipTests; fi

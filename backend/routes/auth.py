@@ -188,7 +188,7 @@ def login():
 
 @auth_bp.route('/refresh', methods=['POST'])
 def refresh():
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     refresh_token = data.get('refresh_token')
     
     if not refresh_token:

@@ -124,6 +124,7 @@ const navGroups = [
   {
     label: '平台治理',
     items: [
+      { path: '/servers', label: '服务器管理', description: '纳管服务器节点及SSH凭证', icon: 'Platform' },
       { path: '/tenants', label: '租户治理', description: '多租户上下文与隔离', icon: 'OfficeBuilding' },
     ],
   },

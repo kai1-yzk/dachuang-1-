@@ -6,6 +6,7 @@ from services.command_risk_service import evaluate_risk, to_command
 from services.ssh_service import run_command_stream
 from utils.db import execute_query, execute_update
 from utils.security import ensure_role, get_request_tenant_id
+from utils.ai_client import generate_ops_plan, query_ai_assistant
 
 assistant_bp = Blueprint("assistant", __name__)
 _PENDING_OPS = {}
@@ -107,13 +108,17 @@ def query_assistant():
     context = _fetch_context(question, tenant_id, server_id=server_id)
     suggestions = _suggestions(question)
 
-    answer = "基于当前运维记录，建议先执行低风险检查，再根据结果决定是否走审批执行高风险操作。"
+    ai_response = query_ai_assistant(question, context)
+    answer = ai_response.get("answer", "基于当前运维记录，建议先执行低风险检查，再根据结果决定是否走审批执行高风险操作。")
+    ai_source = ai_response.get("ai_source", "fallback")
+
     return jsonify(
         {
             "code": 200,
             "message": "ok",
             "data": {
                 "answer": answer,
+                "ai_source": ai_source,
                 "suggestions": suggestions,
                 "citations": context,
                 "risk_level": "high" if any(s.get("risk_level") == "high" for s in suggestions) else "medium",
@@ -161,15 +166,20 @@ def ops_plan():
         return jsonify({"code": 400, "message": "command and server_id are required", "data": None}), 400
 
     role = getattr(request, "user", {}).get("role", "operator")
-    mapped = to_command(command_text)
-    evaluated = evaluate_risk(mapped.get("command") or command_text, role, force_approved=False)
+    ai_plan = generate_ops_plan(command_text)
+    ai_source = ai_plan.get("ai_source", "fallback")
+    translated_command = ai_plan.get("command", command_text)
 
-    steps = [
+    mapped = to_command(translated_command)
+    final_command = mapped.get("command") or translated_command
+    evaluated = evaluate_risk(final_command, role, force_approved=False)
+
+    steps = ai_plan.get("steps", [
         "1) 建议先执行命令前置检查（资源与权限）",
-        f"2) 执行命令: {evaluated.get('command')}",
+        f"2) 执行命令: {final_command}",
         "3) 校验执行结果是否符合预期，并记录审计日志",
-    ]
-    expected = "命令正常返回退出状态 exit_status=0，目标服务状态恢复或指标回落。"
+    ])
+    expected = ai_plan.get("expected_effect", "命令正常返回退出状态 exit_status=0，目标服务状态恢复或指标回落。")
 
     token = secrets.token_urlsafe(18)
     _cleanup_pending_tokens()
@@ -177,7 +187,7 @@ def ops_plan():
         "user_id": int(getattr(request, "user", {}).get("user_id") or 0),
         "role": role,
         "server_id": server_id,
-        "command": evaluated.get("command") or command_text,
+        "command": final_command,
         "risk_level": evaluated.get("risk_level"),
         "expires_at": datetime.datetime.utcnow() + datetime.timedelta(seconds=_OPS_TOKEN_TTL_SECONDS),
     }
@@ -186,6 +196,7 @@ def ops_plan():
         "solution": {
             "steps": steps,
             "expected_effect": expected,
+            "resolved_command": final_command,
         },
         "risk": {
             "level": evaluated.get("risk_level"),
@@ -193,6 +204,7 @@ def ops_plan():
             "is_high_risk": evaluated.get("risk_level") == "HIGH",
             "risk_consequence": "可能导致服务中断或数据丢失" if evaluated.get("risk_level") == "HIGH" else "风险可控",
         },
+        "ai_source": ai_source,
         "requires_explicit_consent": True,
         "execution_token": token,
         "token_ttl_seconds": _OPS_TOKEN_TTL_SECONDS,

@@ -383,7 +383,7 @@ def execute_command():
     出参: JSON (执行结果)
     核心逻辑: 经白名单与高危拦截后才允许下发系统
     """
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     command = data.get('command', '')
     mapped = to_command(command)
     role_name = getattr(request, 'user', {}).get('role', 'operator')

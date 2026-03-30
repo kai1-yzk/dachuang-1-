@@ -133,13 +133,6 @@ def _service_candidates(name: str) -> List[str]:
     if not re.match(r"^[a-zA-Z0-9_.-]+$", base):
         return []
 
-    allowset = set(COMMON_SERVICES)
-    for values in SERVICE_ALIASES.values():
-        allowset.update(values)
-    allowset.update(SERVICE_ALIASES.keys())
-    if base not in allowset:
-        return []
-
     aliases = SERVICE_ALIASES.get(base, [base])
     seen = set()
     result: List[str] = []
@@ -151,36 +144,56 @@ def _service_candidates(name: str) -> List[str]:
 
 
 def _build_batch_status_command() -> str:
-    lines = [
-        "set +e",
-    ]
-    for base in COMMON_SERVICES:
-        candidates = " ".join(_service_candidates(base))
-        lines.extend([
-            f"svc_base='{base}'",
-            "svc_status='inactive'",
-            "svc_autostart='disabled'",
-            f"for svc_name in {candidates}; do",
-            "  if command -v systemctl >/dev/null 2>&1; then",
-            "    systemctl is-active \"$svc_name\" >/dev/null 2>&1 && svc_status='active'",
-            "    systemctl is-enabled \"$svc_name\" >/dev/null 2>&1 && svc_autostart='enabled'",
-            "  fi",
-            "  if [ \"$svc_status\" != 'active' ] && command -v service >/dev/null 2>&1; then",
-            "    service \"$svc_name\" status 2>/dev/null | grep -Eiq 'running|start/running|active (running)' && svc_status='active'",
-            "  fi",
-            "  if [ \"$svc_status\" != 'active' ] && command -v rc-service >/dev/null 2>&1; then",
-            "    rc-service \"$svc_name\" status 2>/dev/null | grep -Eiq 'started|running' && svc_status='active'",
-            "  fi",
-            "  if [ \"$svc_autostart\" != 'enabled' ] && command -v chkconfig >/dev/null 2>&1; then",
-            "    chkconfig --list \"$svc_name\" 2>/dev/null | grep -qi ':on' && svc_autostart='enabled'",
-            "  fi",
-            "  if [ \"$svc_autostart\" != 'enabled' ] && command -v rc-update >/dev/null 2>&1; then",
-            "    rc-update show 2>/dev/null | grep -Eq '^[[:space:]]*'\"$svc_name\"'[[:space:]]' && svc_autostart='enabled'",
-            "  fi",
-            "done",
-            "echo __AIOPS_SVC__${svc_base}|${svc_status}|${svc_autostart}",
-        ])
-    return " ; ".join(lines)
+    script = """
+set +e
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl list-unit-files --type=service --no-pager --no-legend 2>/dev/null | while read -r line; do
+        svc_name=$(echo "$line" | awk '{print $1}' | sed 's/\\.service$//')
+        autostart_raw=$(echo "$line" | awk '{print $2}')
+        
+        if echo "$svc_name" | grep -Eq '^(systemd-|dbus-|snap-|sysinit-|networkd-|user@|getty@|kmod-|modprobe@|console-getty|container-getty@|cryptsetup|debug-shell@|emergency|hwclock-save|initrd-|quotaon|rc-local|serial-getty@)'; then
+            continue
+        fi
+        
+        svc_status='inactive'
+        svc_autostart='disabled'
+        
+        if [ "$autostart_raw" = "enabled" ]; then
+            svc_autostart='enabled'
+        fi
+        
+        active_raw=$(systemctl is-active "$svc_name" 2>/dev/null)
+        if [ "$active_raw" = "active" ]; then
+            svc_status='active'
+        fi
+        
+        echo "__AIOPS_SVC__${svc_name}|${svc_status}|${svc_autostart}"
+    done
+elif command -v service >/dev/null 2>&1; then
+    service --status-all 2>/dev/null | while read -r line; do
+        status_char=$(echo "$line" | awk '{print $2}')
+        svc_name=$(echo "$line" | awk '{print $4}')
+        
+        if [ -z "$svc_name" ]; then
+            continue
+        fi
+        
+        svc_status='inactive'
+        svc_autostart='disabled'
+        
+        if [ "$status_char" = "+" ]; then
+            svc_status='active'
+        fi
+        
+        if command -v chkconfig >/dev/null 2>&1; then
+            chkconfig --list "$svc_name" 2>/dev/null | grep -qi ':on' && svc_autostart='enabled'
+        fi
+        
+        echo "__AIOPS_SVC__${svc_name}|${svc_status}|${svc_autostart}"
+    done
+fi
+"""
+    return script
 
 
 def _batch_service_snapshot(server_id: int) -> Dict[str, Dict[str, str]]:
@@ -205,9 +218,9 @@ def _batch_service_snapshot(server_id: int) -> Dict[str, Dict[str, str]]:
 def list_services(server_id: int) -> List[Dict[str, Any]]:
     snapshot = _batch_service_snapshot(server_id)
     rows: List[Dict[str, Any]] = []
-    for name in COMMON_SERVICES:
-        status = (snapshot.get(name) or {}).get("status", "inactive")
-        autostart = (snapshot.get(name) or {}).get("autostart", "disabled")
+    for name, info in snapshot.items():
+        status = info.get("status", "inactive")
+        autostart = info.get("autostart", "disabled")
         rows.append(
             {
                 "service_name": name,
@@ -216,6 +229,8 @@ def list_services(server_id: int) -> List[Dict[str, Any]]:
                 "health": "healthy" if status == "active" else "unhealthy",
             }
         )
+    # Sort by active first, then alphabetically
+    rows.sort(key=lambda x: (0 if x["status"] == "active" else 1, x["service_name"]))
     return rows
 
 

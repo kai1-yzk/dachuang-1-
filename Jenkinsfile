@@ -69,7 +69,13 @@ pipeline {
                 }
             }
             steps {
-                sh 'newman run postman_collection.json -e postman_environment.json'
+                sh '''
+                if [ -f postman_collection.json ] && [ -f postman_environment.json ]; then
+                  newman run postman_collection.json -e postman_environment.json
+                else
+                  echo "Skip Newman: postman_collection.json or postman_environment.json not found."
+                fi
+                '''
             }
         }
     }

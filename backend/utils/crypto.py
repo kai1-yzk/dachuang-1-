@@ -36,5 +36,8 @@ def decrypt_secret(value: str | None) -> str | None:
     if not text.startswith("enc$"):
         return text
     token = text[4:]
-    plain = _get_fernet().decrypt(token.encode("utf-8"))
-    return plain.decode("utf-8")
+    try:
+        plain = _get_fernet().decrypt(token.encode("utf-8"))
+        return plain.decode("utf-8")
+    except Exception:
+        return None

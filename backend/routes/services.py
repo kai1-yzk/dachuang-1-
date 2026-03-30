@@ -20,6 +20,20 @@ def _service_error_status(result: dict) -> int:
     return 500
 
 
+def _parse_enabled(value):
+    if isinstance(value, bool):
+        return True, value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "on"}:
+            return True, True
+        if lowered in {"false", "0", "no", "off"}:
+            return True, False
+    if isinstance(value, int) and value in {0, 1}:
+        return True, bool(value)
+    return False, None
+
+
 @services_bp.route("/list", methods=["GET"])
 def service_list():
     server_id = request.args.get("server_id", type=int)
@@ -72,9 +86,11 @@ def service_autostart():
     payload = request.get_json(silent=True) or {}
     server_id = int(payload.get("server_id") or 0)
     service_name = (payload.get("service_name") or "").strip()
-    enabled = bool(payload.get("enabled", True))
+    ok, enabled = _parse_enabled(payload.get("enabled", True))
     if not server_id or not service_name:
         return jsonify({"code": 400, "message": "server_id/service_name invalid", "data": None}), 400
+    if not ok:
+        return jsonify({"code": 400, "message": "enabled invalid", "data": None}), 400
 
     result = set_autostart(server_id, service_name, enabled)
     write_audit_log({

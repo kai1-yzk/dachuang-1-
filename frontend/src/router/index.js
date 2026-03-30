@@ -68,6 +68,16 @@ const routes = [
     }
   },
   {
+    path: '/servers',
+    name: 'Servers',
+    component: () => import('../views/Servers.vue'),
+    meta: {
+      requiresAuth: true,
+      title: '服务器管理',
+      subtitle: '管理纳管服务器节点及SSH凭证'
+    }
+  },
+  {
     path: '/assistant',
     name: 'Assistant',
     component: () => import('../views/Assistant.vue'),
