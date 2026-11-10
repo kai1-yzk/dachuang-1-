@@ -260,7 +260,8 @@ def request_mfa_code():
         return jsonify({"code": 400, "message": "session_id is required"}), 400
 
     code = generate_short_code()
-    expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=5)
+    # 同 ws_terminal：与 MySQL NOW() 比较，必须使用本地时间
+    expires_at = datetime.datetime.now() + datetime.timedelta(minutes=5)
     execute_update(
         """
         INSERT INTO mfa_challenges

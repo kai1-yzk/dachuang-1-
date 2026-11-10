@@ -40,7 +40,10 @@ def _close_session(session_id: str, status: str):
 
 def _request_short_code(user_id: int, session_id: str, command_text: str) -> str:
     code = f"{secrets.randbelow(10**6):06d}"
-    expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=5)
+    # 必须用本地时间：expires_at 会与 MySQL 的 NOW() 比较，
+    # 而 NOW() 返回的是会话时区（东八区）时间。用 utcnow() 会差 8 小时，
+    # 写入即过期，导致短码永远校验失败。
+    expires_at = datetime.datetime.now() + datetime.timedelta(minutes=5)
     execute_update(
         """
         INSERT INTO mfa_challenges
