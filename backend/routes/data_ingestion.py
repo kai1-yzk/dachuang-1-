@@ -3,7 +3,7 @@
 保持原有URL路径、请求/响应格式及状态码完全一致
 """
 from flask import Blueprint, request, jsonify
-from utils.redis_client import redis_client
+from utils.redis_client import get_redis_client
 from tasks import process_data_async
 
 data_bp = Blueprint('data', __name__)
@@ -13,11 +13,12 @@ def ingest_data():
     """
     等价于 Java 端: @PostMapping("/ingest")
     """
-    payload = request.get_json() or {}
-    
+    payload = request.get_json(silent=True) or {}
+
     # 使用 Redis 原子递增替代 AtomicLong
     count = 1
-    if redis_client:
+    redis_client = get_redis_client()
+    if redis_client is not None:
         try:
             count = redis_client.incr('aiops:event_count')
         except:
@@ -39,7 +40,8 @@ def get_stats():
     等价于 Java 端: @GetMapping("/stats")
     """
     count = 0
-    if redis_client:
+    redis_client = get_redis_client()
+    if redis_client is not None:
         try:
             count = int(redis_client.get('aiops:event_count') or 0)
         except:

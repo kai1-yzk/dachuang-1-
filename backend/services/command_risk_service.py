@@ -76,9 +76,12 @@ def evaluate_risk(command: str, role_name: str, force_approved: bool = False) ->
     if ast_info["has_redirect"]:
         score += 10
 
+    # 分级阈值与打分口径要对齐：管道/重定向各 10 分，
+    # 因此 >=10 即视为 MEDIUM（含重定向或管道的命令对 operator 一律拦截），
+    # >=80（命中危险模式）为 HIGH。
     if score >= 80:
         level = "HIGH"
-    elif score >= 40:
+    elif score >= 10:
         level = "MEDIUM"
     else:
         level = "LOW"
