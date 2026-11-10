@@ -181,6 +181,24 @@ def ops_plan():
     ])
     expected = ai_plan.get("expected_effect", "命令正常返回退出状态 exit_status=0，目标服务状态恢复或指标回落。")
 
+    # 风险拦截前置：evaluate_risk 判定不允许时，不签发执行令牌。
+    # 否则前端只要确认二次弹窗即可让高危命令真正下发（此前为安全漏洞）。
+    if not evaluated.get("allowed"):
+        return jsonify({
+            "code": 403,
+            "message": f"Command blocked: {evaluated.get('reason') or 'risk too high'}",
+            "data": {
+                "risk": {
+                    "level": evaluated.get("risk_level"),
+                    "score": evaluated.get("risk_score"),
+                    "is_high_risk": evaluated.get("risk_level") == "HIGH",
+                    "risk_consequence": "可能导致服务中断或数据丢失" if evaluated.get("risk_level") == "HIGH" else "风险过高，已拦截",
+                },
+                "mfa_required": evaluated.get("mfa_required", False),
+                "resolved_command": final_command,
+            },
+        }), 403
+
     token = secrets.token_urlsafe(18)
     _cleanup_pending_tokens()
     _PENDING_OPS[token] = {
@@ -245,6 +263,16 @@ def ops_execute():
             "message": "high risk command requires second confirmation",
             "data": {"risk_level": "极高风险", "risk_consequence": "可能导致数据丢失或业务中断"},
         }), 409
+
+    # 执行前按当前请求角色重新评估一次，防止 token 签发后以更低权限重放。
+    rechecked = evaluate_risk(str(pending["command"]), current_role, force_approved=True)
+    if not rechecked.get("allowed"):
+        _PENDING_OPS.pop(token, None)
+        return jsonify({
+            "code": 403,
+            "message": f"Command blocked: {rechecked.get('reason') or 'risk too high'}",
+            "data": None,
+        }), 403
 
     try:
         result = run_command_stream(int(pending["server_id"]), str(pending["command"]), timeout=25)
