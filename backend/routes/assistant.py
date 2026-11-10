@@ -3,6 +3,7 @@ import datetime
 import secrets
 
 from services.command_risk_service import evaluate_risk, to_command
+from services.audit_service import write_audit_log
 from services.ssh_service import run_command_stream
 from utils.db import execute_query, execute_update
 from utils.security import ensure_role, get_request_tenant_id
@@ -184,6 +185,20 @@ def ops_plan():
     # 风险拦截前置：evaluate_risk 判定不允许时，不签发执行令牌。
     # 否则前端只要确认二次弹窗即可让高危命令真正下发（此前为安全漏洞）。
     if not evaluated.get("allowed"):
+        write_audit_log({
+            "user_id": int(getattr(request, "user", {}).get("user_id") or 0),
+            "username": getattr(request, "user", {}).get("username", "unknown"),
+            "role_name": role,
+            "server_id": server_id,
+            "session_id": payload.get("session_id"),
+            "command_raw": command_text,
+            "command_parsed": final_command,
+            "risk_score": evaluated.get("risk_score"),
+            "risk_level": evaluated.get("risk_level"),
+            "action": "assistant_plan",
+            "result": "blocked",
+            "detail": evaluated.get("reason") or "risk too high",
+        })
         return jsonify({
             "code": 403,
             "message": f"Command blocked: {evaluated.get('reason') or 'risk too high'}",
@@ -199,6 +214,21 @@ def ops_plan():
             },
         }), 403
 
+    write_audit_log({
+        "user_id": int(getattr(request, "user", {}).get("user_id") or 0),
+        "username": getattr(request, "user", {}).get("username", "unknown"),
+        "role_name": role,
+        "server_id": server_id,
+        "session_id": payload.get("session_id"),
+        "command_raw": command_text,
+        "command_parsed": final_command,
+        "risk_score": evaluated.get("risk_score"),
+        "risk_level": evaluated.get("risk_level"),
+        "action": "assistant_plan",
+        "result": "planned",
+        "detail": f"ai_source={ai_source}",
+    })
+
     token = secrets.token_urlsafe(18)
     _cleanup_pending_tokens()
     _PENDING_OPS[token] = {
@@ -206,6 +236,7 @@ def ops_plan():
         "role": role,
         "server_id": server_id,
         "command": final_command,
+        "command_raw": command_text,
         "risk_level": evaluated.get("risk_level"),
         "expires_at": datetime.datetime.utcnow() + datetime.timedelta(seconds=_OPS_TOKEN_TTL_SECONDS),
     }
@@ -279,6 +310,20 @@ def ops_execute():
         stdout = "".join(c.get("text", "") for c in result.get("chunks", []) if c.get("stream") == "stdout")
         stderr = "".join(c.get("text", "") for c in result.get("chunks", []) if c.get("stream") == "stderr")
         _PENDING_OPS.pop(token, None)
+        write_audit_log({
+            "user_id": current_user_id,
+            "username": getattr(request, "user", {}).get("username", "unknown"),
+            "role_name": current_role,
+            "server_id": int(pending["server_id"]),
+            "session_id": payload.get("session_id"),
+            "command_raw": pending.get("command_raw") or pending["command"],
+            "command_parsed": str(pending["command"]),
+            "risk_score": rechecked.get("risk_score"),
+            "risk_level": pending.get("risk_level"),
+            "action": "assistant_execute",
+            "result": "success" if int(result.get("exit_status") or 0) == 0 else "failed",
+            "detail": (stderr or stdout or "ok")[:1000],
+        })
         return jsonify({
             "code": 200,
             "message": "executed",
@@ -289,4 +334,18 @@ def ops_execute():
             },
         })
     except Exception as e:
+        write_audit_log({
+            "user_id": current_user_id,
+            "username": getattr(request, "user", {}).get("username", "unknown"),
+            "role_name": current_role,
+            "server_id": int(pending["server_id"]),
+            "session_id": payload.get("session_id"),
+            "command_raw": pending.get("command_raw") or pending["command"],
+            "command_parsed": str(pending["command"]),
+            "risk_score": None,
+            "risk_level": pending.get("risk_level"),
+            "action": "assistant_execute",
+            "result": "error",
+            "detail": str(e)[:1000],
+        })
         return jsonify({"code": 500, "message": f"execute failed: {str(e)}", "data": None}), 500

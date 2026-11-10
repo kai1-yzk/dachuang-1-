@@ -218,3 +218,102 @@ class TestOpsExecuteRiskGate:
         assert "Filesystem" in resp.get_json()["data"]["stdout"]
         mock_run.assert_called_once()
         assert mock_run.call_args[0][0] == 3
+
+
+class TestAssistantAudit:
+    """审计覆盖回归：智能助手链路此前完全没有写审计日志。"""
+
+    @patch("routes.assistant.write_audit_log")
+    @patch("routes.assistant.generate_ops_plan")
+    def test_blocked_plan_writes_audit(self, mock_plan, mock_audit, client):
+        mock_plan.return_value = {"command": "rm -rf /tmp/data", "ai_source": "fallback"}
+
+        resp = client.post(
+            "/api/assistant/ops-plan",
+            json={"command": "rm -rf /tmp/data", "server_id": 1},
+            headers=_auth("operator"),
+        )
+
+        assert resp.status_code == 403
+        mock_audit.assert_called()
+        payload = mock_audit.call_args[0][0]
+        assert payload["result"] == "blocked"
+        assert payload["action"] == "assistant_plan"
+        assert payload["command_parsed"] == "rm -rf /tmp/data"
+
+    @patch("routes.assistant.write_audit_log")
+    @patch("routes.assistant.generate_ops_plan")
+    def test_successful_plan_writes_audit(self, mock_plan, mock_audit, client):
+        mock_plan.return_value = {"command": "df -h", "ai_source": "fallback"}
+
+        resp = client.post(
+            "/api/assistant/ops-plan",
+            json={"command": "df -h", "server_id": 1},
+            headers=_auth("operator"),
+        )
+
+        assert resp.status_code == 200
+        payload = mock_audit.call_args[0][0]
+        assert payload["result"] == "planned"
+        assert payload["server_id"] == 1
+
+    @patch("routes.assistant.write_audit_log")
+    @patch("routes.assistant.run_command_stream")
+    def test_execute_writes_audit(self, mock_run, mock_audit, client):
+        from routes.assistant import _PENDING_OPS
+
+        mock_run.return_value = {
+            "ok": True,
+            "exit_status": 0,
+            "chunks": [{"stream": "stdout", "text": "ok\n"}],
+        }
+        token = "test-token-audit"
+        _PENDING_OPS[token] = {
+            "user_id": 1,
+            "role": "operator",
+            "server_id": 5,
+            "command": "df -h",
+            "command_raw": "查看磁盘",
+            "risk_level": "LOW",
+            "expires_at": datetime.datetime.utcnow() + datetime.timedelta(minutes=5),
+        }
+
+        resp = client.post(
+            "/api/assistant/ops-execute",
+            json={"execution_token": token, "consent": True},
+            headers=_auth(role="operator"),
+        )
+
+        assert resp.status_code == 200
+        payload = mock_audit.call_args[0][0]
+        assert payload["action"] == "assistant_execute"
+        assert payload["result"] == "success"
+        assert payload["command_raw"] == "查看磁盘"
+        assert payload["server_id"] == 5
+
+    @patch("routes.assistant.write_audit_log")
+    @patch("routes.assistant.run_command_stream")
+    def test_execute_failure_writes_audit(self, mock_run, mock_audit, client):
+        from routes.assistant import _PENDING_OPS
+
+        mock_run.side_effect = RuntimeError("ssh down")
+        token = "test-token-audit-fail"
+        _PENDING_OPS[token] = {
+            "user_id": 1,
+            "role": "operator",
+            "server_id": 5,
+            "command": "df -h",
+            "risk_level": "LOW",
+            "expires_at": datetime.datetime.utcnow() + datetime.timedelta(minutes=5),
+        }
+
+        resp = client.post(
+            "/api/assistant/ops-execute",
+            json={"execution_token": token, "consent": True},
+            headers=_auth(role="operator"),
+        )
+
+        assert resp.status_code == 500
+        payload = mock_audit.call_args[0][0]
+        assert payload["result"] == "error"
+        assert "ssh down" in payload["detail"]

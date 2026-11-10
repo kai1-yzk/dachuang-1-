@@ -124,12 +124,23 @@ def validate_server_ssh_config(server_id: int) -> Dict[str, Any]:
     return {"ok": True, "config": config}
 
 
-def run_command_stream(server_id: int, command: str, timeout: int = 20) -> Dict[str, Any]:
+def run_command_stream(
+    server_id: int,
+    command: str,
+    timeout: int = 20,
+    use_pty: bool = False,
+) -> Dict[str, Any]:
+    """在目标服务器执行命令并收集输出。
+
+    use_pty 默认关闭：分配 pty 后，像 `systemctl restart xxx` 这类命令
+    不会关闭通道，读取循环会一直等到 timeout（实测 12s+ 超时才返回）。
+    只有确实需要 TTY 的交互式场景（如终端会话）才应传 use_pty=True。
+    """
     config = _load_server_config(server_id)
     client = _connect(config)
     chunks: List[Dict[str, str]] = []
     try:
-        _, stdout, stderr = client.exec_command(command, timeout=timeout, get_pty=True)
+        _, stdout, stderr = client.exec_command(command, timeout=timeout, get_pty=use_pty)
         channel = stdout.channel
 
         start = time.time()
