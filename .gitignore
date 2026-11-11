@@ -38,3 +38,12 @@ build/
 # Local/copilot/session artifacts
 .trae/
 memories/
+
+# AI 数据集（体积大，不入库；获取方式见 ai_engine/README.md）
+ai_engine/data/
+
+# AI 模型产物（由 ai_engine/train.py 生成，不入库）
+ai_engine/models/*.pkl
+ai_engine/models/*.pt
+ai_engine/models/*.pth
+ai_engine/models/*.onnx

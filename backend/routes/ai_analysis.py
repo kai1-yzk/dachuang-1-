@@ -10,6 +10,7 @@ from utils.security import validate_ai_command
 from services.command_risk_service import evaluate_risk, to_command
 from services.ai_explainer_service import build_explain
 from services.audit_service import write_audit_log
+from services.ssh_service import run_command_stream
 from utils.db import execute_query
 from utils.security import get_request_tenant_id
 
@@ -294,7 +295,7 @@ def predict_anomaly():
     入参: JSON (服务器特征数据)
     出参: JSON (预测结果、异常类型)
     """
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     server_id = data.get('server_id')
 
     try:
@@ -412,12 +413,64 @@ def execute_command():
             "data": None
         }), 403
         
-    # 模拟执行
+    server_id = data.get('server_id')
+    if not server_id:
+        return jsonify({
+            "code": 400,
+            "message": "server_id is required to execute command",
+            "data": None
+        }), 400
+    try:
+        server_id = int(server_id)
+    except (TypeError, ValueError):
+        return jsonify({"code": 400, "message": "server_id must be an integer", "data": None}), 400
+
+    # 真实执行：白名单 + 风险校验通过后，通过 SSH 在目标服务器下发命令
+    try:
+        exec_result = run_command_stream(server_id, mapped['command'], timeout=int(data.get('timeout') or 20))
+        chunks = exec_result.get("chunks", [])
+        stdout_text = "".join(c.get("text", "") for c in chunks if c.get("stream") == "stdout")
+        stderr_text = "".join(c.get("text", "") for c in chunks if c.get("stream") == "stderr")
+        exit_status = exec_result.get("exit_status")
+        exec_ok = True
+    except Exception as exc:
+        logger.exception("AI command execution failed on server %s", server_id)
+        stdout_text, stderr_text, exit_status, exec_ok = "", str(exc), None, False
+
+    write_audit_log({
+        'user_id': getattr(request, 'user', {}).get('user_id'),
+        'username': getattr(request, 'user', {}).get('username', 'unknown'),
+        'role_name': role_name,
+        'server_id': server_id,
+        'session_id': data.get('session_id'),
+        'command_raw': command,
+        'command_parsed': mapped['command'],
+        'risk_score': evaluated['risk_score'],
+        'risk_level': evaluated['risk_level'],
+        'action': 'execute',
+        'result': 'success' if (exec_ok and exit_status == 0) else 'failed',
+        'detail': (stderr_text or stdout_text or 'ok')[:1000]
+    })
+
+    if not exec_ok:
+        return jsonify({
+            "code": 502,
+            "message": f"Command execution failed: {stderr_text or 'SSH error'}",
+            "data": {
+                "stdout": stdout_text,
+                "stderr": stderr_text,
+                "risk": {"score": evaluated['risk_score'], "level": evaluated['risk_level']}
+            }
+        }), 502
+
     return jsonify({
         "code": 200,
         "message": "Command Executed",
         "data": {
-            "stdout": f"[simulated] {mapped['command']}\nActive connections...\n...",
+            "stdout": stdout_text,
+            "stderr": stderr_text,
+            "exit_status": exit_status,
+            "server_id": server_id,
             "risk": {
                 "score": evaluated['risk_score'],
                 "level": evaluated['risk_level']

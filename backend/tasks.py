@@ -9,7 +9,20 @@ load_local_env()
 
 logger = logging.getLogger(__name__)
 
-REDIS_URL = f"redis://{os.environ.get('REDIS_HOST', 'localhost')}:{os.environ.get('REDIS_PORT', 6379)}/1"
+def _build_redis_url(db: int) -> str:
+    """组装完整 Redis URI，包含密码与独立 DB。
+
+    与应用主 Redis 配置同源（同一组 REDIS_* 环境变量），
+    避免启用鉴权或分库时 Celery 连不上 broker。
+    """
+    host = os.environ.get("REDIS_HOST", "localhost")
+    port = os.environ.get("REDIS_PORT", 6379)
+    password = os.environ.get("REDIS_PASSWORD") or ""
+    auth = f":{password}@" if password else ""
+    return f"redis://{auth}{host}:{port}/{db}"
+
+
+REDIS_URL = _build_redis_url(int(os.environ.get("CELERY_REDIS_DB", 1)))
 
 celery_app = Celery(
     'aiops_tasks',

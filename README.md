@@ -59,13 +59,15 @@
 ### 7. 智能助手
 
 - 生成操作方案、风险评估、执行预期。
-- 经用户确认后触发实际命令执行。
+- 经用户确认后**通过 SSH 真实下发执行**（不再是模拟返回），并回传 `exit_status`、`stdout`、`stderr`。
+- 风险评估不允许的命令在方案阶段即返回 403，不签发执行令牌。
+- 未配置 `DEEPSEEK_API_KEY` 时自动回退到规则映射（`ai_source=fallback`）。
 
 ### 8. 多租户与安全审计
 
 - 租户上下文隔离（`tenant_id`）。
 - 角色鉴权（operator / tenant_operator / tenant_admin / platform_admin / superadmin）。
-- 审计日志覆盖关键操作链路。
+- 审计日志覆盖关键操作链路：终端命令、服务控制、助手方案生成与执行、批量审批。
 
 ## 技术创新
 
@@ -130,7 +132,8 @@ backend/                  Flask 后端 API + SocketIO
 backend/routes/           路由蓝图
 backend/services/         业务服务
 backend/utils/            安全、DB、Redis 等工具
-ai_engine/                模型训练与推理代码
+ai_engine/                模型训练与推理代码（数据集与模型产物不入库）
+ai_engine/README.md       数据集获取与模型生成说明
 data_collector/           数据采集预处理脚本
 deploy/init.sql           数据库初始化脚本
 docker-compose.yml        一键容器编排
@@ -253,18 +256,21 @@ curl -X POST http://localhost:5001/api/batch/jobs/1/approve \
 ### 示例 6：智能助手执行流程
 
 ```bash
-# 1) 生成执行方案
+# 1) 生成执行方案（风险不允许时返回 403，且不签发令牌）
 curl -X POST http://localhost:5001/api/assistant/ops-plan \
  -H "Authorization: Bearer <ACCESS_TOKEN>" \
  -H "Content-Type: application/json" \
- -d '{"command":"restart nginx","server_id":1}'
+ -d '{"command":"df -h","server_id":1}'
 
-# 2) 确认执行
+# 2) 确认执行（token 有效期 300 秒，需 consent=true）
 curl -X POST http://localhost:5001/api/assistant/ops-execute \
  -H "Authorization: Bearer <ACCESS_TOKEN>" \
  -H "Content-Type: application/json" \
- -d '{"execution_token":"<TOKEN>","consent":true,"high_risk_confirmed":true}'
+ -d '{"execution_token":"<TOKEN>","consent":true,"high_risk_confirmed":false}'
 ```
+
+> 注：`high_risk_confirmed` 仅在高风险命令时需要为 `true`；风险等级为 `HIGH` 且未确认时返回 409。
+> 若命令被判为不允许执行，`ops-plan` 阶段就会直接返回 403，不会走到执行环节。
 
 ## 核心接口清单（节选）
 
@@ -339,11 +345,40 @@ $env:DB_NAME="aiops_db"
 
 - 目标服务器未安装 `kubectl` 或未配置集群上下文。
 
+### 5. 服务控制返回 permission_denied
+
+- 目标机运维账号缺少 NOPASSWD sudo 权限。检查：`sudo -n true`。
+- 需要在该服务器上为运维账号配置免密 sudo，平台不会交互式输入密码。
+
+### 6. MFA 短码提示「无效或已过期」
+
+- 常见原因是数据库与应用时区不一致。短码的 `expires_at` 与 MySQL `NOW()` 比较，
+  两者必须处于同一时区基准。若服务器时区与数据库会话时区不同，请统一配置。
+
+### 7. Docker Compose 起不来
+
+- Windows 上 compose 依赖 WSL2。若 `wsl --status` 报错或 `HCS_E_SERVICE_NOT_AVAILABLE`，
+  需安装 WSL2 并开启虚拟化后重启。
+- 本地开发可改用原生 MySQL + Redis，不必依赖 Docker。
+
+## 测试
+
+```bash
+cd backend
+python -m pytest -q
+```
+
+当前共 86 个用例，覆盖命令风险评估、JWT 鉴权、AI 执行链、助手审批与审计、
+服务命令回退链、SSH pty 行为、MFA 时区、Redis/Celery 配置、数据接入降级。
+
+CI 在 push / PR 时自动执行后端测试与前端构建。
+
 ## 文档与规划
 
 - 功能规格：`Project_Functional_Specification.md`
 - 多服务器规划：`docs/multi_server_management_plan.md`
 - 架构图：`docs/architecture_8_layers.mmd`
+- 已知问题：`docs/项目存在问题_按修复难度分级.md`
 
 ## 贡献指南
 
@@ -352,7 +387,12 @@ $env:DB_NAME="aiops_db"
 - 小步提交，单一变更目标。
 - 新增接口保持统一返回结构：`code/message/data`。
 - 涉及高风险行为时补齐审计与权限校验。
+- 新增核心逻辑时同步补充单元测试。
 
 ## License
 
-当前仓库未显式声明 License，如需开源发布请补充许可证文件。
+本项目采用 [MIT License](LICENSE)。
+
+注意：仓库中的 AI 数据集（GAIA、UNSW-NB15）为第三方公开学术数据集，
+不在本许可证覆盖范围内，使用时请遵守其各自的许可与引用要求。
+详见 `ai_engine/README.md`。

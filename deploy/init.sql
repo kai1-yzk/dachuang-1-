@@ -148,23 +148,74 @@ INSERT INTO tenants (id, name, status)
 VALUES (1, 'default-tenant', 'active')
 ON DUPLICATE KEY UPDATE name=VALUES(name), status=VALUES(status);
 
--- ---------------- 以下是修改后的 ALTER TABLE 语句 ----------------
+-- ---------------- 增量字段（幂等） ----------------
+-- 说明：新建库时 user/servers 的 tenant_id 已在 CREATE TABLE 中定义，
+-- 此处仅为兼容「先建旧表、后升级」的历史库，因此必须先判存在再 ALTER，
+-- 否则重复执行 init.sql 会报 ERROR 1060 Duplicate column name。
 
-ALTER TABLE `user`
-    ADD COLUMN `tenant_id` BIGINT UNSIGNED NOT NULL DEFAULT 1 AFTER `role_name`,
-    ADD INDEX `idx_user_tenant` (`tenant_id`);
+SET @stmt = IF(
+    (SELECT COUNT(*) FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND COLUMN_NAME = 'tenant_id') = 0,
+    'ALTER TABLE `user` ADD COLUMN `tenant_id` BIGINT UNSIGNED NOT NULL DEFAULT 1 AFTER `role_name`',
+    'DO 0'
+);
+PREPARE s FROM @stmt; EXECUTE s; DEALLOCATE PREPARE s;
 
-ALTER TABLE `servers`
-    ADD COLUMN `tenant_id` BIGINT UNSIGNED NOT NULL DEFAULT 1 AFTER `id`,
-    ADD INDEX `idx_server_tenant` (`tenant_id`);
+SET @stmt = IF(
+    (SELECT COUNT(*) FROM information_schema.STATISTICS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND INDEX_NAME = 'idx_user_tenant') = 0,
+    'ALTER TABLE `user` ADD INDEX `idx_user_tenant` (`tenant_id`)',
+    'DO 0'
+);
+PREPARE s FROM @stmt; EXECUTE s; DEALLOCATE PREPARE s;
 
-ALTER TABLE `audit_logs`
-    ADD COLUMN `trace_id` VARCHAR(64) NULL AFTER `session_id`,
-    ADD COLUMN `incident_id` BIGINT UNSIGNED NULL AFTER `trace_id`;
+SET @stmt = IF(
+    (SELECT COUNT(*) FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'servers' AND COLUMN_NAME = 'tenant_id') = 0,
+    'ALTER TABLE `servers` ADD COLUMN `tenant_id` BIGINT UNSIGNED NOT NULL DEFAULT 1 AFTER `id`',
+    'DO 0'
+);
+PREPARE s FROM @stmt; EXECUTE s; DEALLOCATE PREPARE s;
 
-ALTER TABLE `server_metrics`
-    ADD COLUMN `collector_status` VARCHAR(20) NOT NULL DEFAULT 'ok' AFTER `metric_payload`,
-    ADD COLUMN `collector_error` TEXT NULL AFTER `collector_status`;
+SET @stmt = IF(
+    (SELECT COUNT(*) FROM information_schema.STATISTICS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'servers' AND INDEX_NAME = 'idx_server_tenant') = 0,
+    'ALTER TABLE `servers` ADD INDEX `idx_server_tenant` (`tenant_id`)',
+    'DO 0'
+);
+PREPARE s FROM @stmt; EXECUTE s; DEALLOCATE PREPARE s;
+
+SET @stmt = IF(
+    (SELECT COUNT(*) FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_logs' AND COLUMN_NAME = 'trace_id') = 0,
+    'ALTER TABLE `audit_logs` ADD COLUMN `trace_id` VARCHAR(64) NULL AFTER `session_id`',
+    'DO 0'
+);
+PREPARE s FROM @stmt; EXECUTE s; DEALLOCATE PREPARE s;
+
+SET @stmt = IF(
+    (SELECT COUNT(*) FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_logs' AND COLUMN_NAME = 'incident_id') = 0,
+    'ALTER TABLE `audit_logs` ADD COLUMN `incident_id` BIGINT UNSIGNED NULL AFTER `trace_id`',
+    'DO 0'
+);
+PREPARE s FROM @stmt; EXECUTE s; DEALLOCATE PREPARE s;
+
+SET @stmt = IF(
+    (SELECT COUNT(*) FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'server_metrics' AND COLUMN_NAME = 'collector_status') = 0,
+    'ALTER TABLE `server_metrics` ADD COLUMN `collector_status` VARCHAR(20) NOT NULL DEFAULT ''ok'' AFTER `metric_payload`',
+    'DO 0'
+);
+PREPARE s FROM @stmt; EXECUTE s; DEALLOCATE PREPARE s;
+
+SET @stmt = IF(
+    (SELECT COUNT(*) FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'server_metrics' AND COLUMN_NAME = 'collector_error') = 0,
+    'ALTER TABLE `server_metrics` ADD COLUMN `collector_error` TEXT NULL AFTER `collector_status`',
+    'DO 0'
+);
+PREPARE s FROM @stmt; EXECUTE s; DEALLOCATE PREPARE s;
 
 -- -------------------------------------------------------------------
 

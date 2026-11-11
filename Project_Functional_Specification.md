@@ -1,207 +1,246 @@
-# 轻量化 AI 服务器运维防护系统 - 功能清单文档
+# 轻量化智能运维防护平台 — 功能规格说明书
 
-[TOC]
-
-## 1. 系统架构概述
-本项目是一个基于前后端分离架构的**轻量化 AI 服务器运维防护系统**。
-- **前端 (Frontend)**: 基于 Vue 3 + Vite + Element Plus 构建，提供数据大盘展示、AI 智能运维终端以及用户鉴权等可视化界面。
-- **后端 (Backend)**: 基于 Flask 构建，集成了 JWT 双令牌认证、系统资源实时监控 (psutil)、AI 模型预测推理 (Isolation Forest + LSTM) 以及基于 Celery + Redis 的高并发异步数据接入。
+> 本文档以**当前仓库代码为准**编写，替换早期 psutil 单机采集方案的历史版本。
+> 最后核对时间：2026-11，对应分支 `fix/pre-test-hardening`。
+> 核对方式：逐条比对 `backend/routes/*.py` 的路由注册与 `frontend/src/views/*.vue` 的调用点。
 
 ---
 
-## 2. 后端功能模块 (Backend)
+## 1. 系统定位
 
-### 2.1 认证与安全模块 (Auth & Security)
-负责处理用户的注册、登录、Token 刷新、退出以及全局的权限拦截与安全加固。
+面向中小团队的多服务器运维控制台，核心特征是**真实采集 + 安全控制 + 审计闭环**：
 
-#### 核心函数与方法
-- **`register`** (`d:\dachuang\backend\routes\auth.py:32-80`)
-  - **用途**: 处理新用户注册，校验密码复杂度并对密码进行 `bcrypt` 哈希后存入数据库。
-  - **输入**: JSON `{username, email, password}`
-  - **输出**: JSON `{code, message}`
-  - **异常处理**: 捕获数据库插入异常，对于已存在的用户名/邮箱返回 `409 Conflict`。
-  - **性能指标**: 密码哈希开销较大，注册接口限流（基于 IP）。
+- 指标数据全部来自受管服务器的 **SSH 实时采集**，不使用前端 mock 或本机 psutil。
+- 高风险操作走「风险评估 → 显式确认 → 可选 MFA 短码 → 审计留痕」链路。
+- 批量命令必须先创建任务、经审批后才会执行。
 
-- **`login`** (`d:\dachuang\backend\routes\auth.py:82-137`)
-  - **用途**: 验证用户凭据，下发 JWT 双令牌（Access Token 15分钟，Refresh Token 7天）。
-  - **输入**: JSON `{username, password}`
-  - **输出**: JSON 包含 `access_token`, `refresh_token`, `user_info`
-  - **异常处理**: 密码错误返回 `401 Invalid credentials`。
-
-- **`rbac_middleware`** (`d:\dachuang\backend\utils\security.py:18-42`)
-  - **用途**: 全局拦截器，校验 Header 中的 `Bearer Token`，解析用户信息并挂载到 `request.user`。
-  - **输入**: `req` (Flask Request), `secret_key` (str)
-  - **输出**: 拦截返回 `401 JSON`，放行返回 `None`。
-
-- **`security_headers_middleware`** (`d:\dachuang\backend\utils\security.py:44-56`)
-  - **用途**: 添加安全响应头，防范 XSS、Clickjacking 等攻击 (`X-Content-Type-Options`, `X-Frame-Options` 等)。
-
-### 2.2 监控指标模块 (Metrics)
-获取当前宿主机的硬件资源使用情况。
-
-#### 核心函数与方法
-- **`get_current_metrics`** (`d:\dachuang\backend\routes\metrics.py:12-37`)
-  - **用途**: 调用 `psutil` 获取 CPU、内存、磁盘的实时使用率。
-  - **输入**: 无
-  - **输出**: JSON 包含 `cpu_usage_percent`, `memory_used_percent` 等指标。
-  - **异常处理**: 依赖底层系统调用，通常无显式异常抛出。
-  - **性能指标**: 响应时间需 < 100ms。
-
-### 2.3 AI 分析与预测模块 (AI Analysis)
-利用 AI 模型进行异常检测与趋势预测，并提供自然语言运维命令的安全性校验。
-
-#### 核心函数与方法
-- **`predict_anomaly`** (`d:\dachuang\backend\routes\ai_analysis.py:11-80`)
-  - **用途**: 接收服务器特征数据，加载 Isolation Forest 进行异常检测，加载 LSTM 进行时序预测。
-  - **输入**: JSON `{features: [...], sequence: [...]}`
-  - **输出**: JSON 包含 `is_anomaly` (bool), `predicted_trend` (float), `suggestion` (str)。
-  - **异常处理**: 模型文件缺失或加载失败时，返回 Mock 降级数据，避免阻塞业务。
-
-- **`validate_ai_command`** (`d:\dachuang\backend\utils\security.py:58-75`)
-  - **用途**: 对传入的 AI 运维指令进行白名单校验与高危敏感词（如 `rm`, `sudo`, `reboot`）拦截。
-  - **输入**: `command` (str)
-  - **输出**: `is_valid` (bool), `message` (str)
-
-- **`execute_command`** (`d:\dachuang\backend\routes\ai_analysis.py:82-108`)
-  - **用途**: 经 `validate_ai_command` 拦截校验通过后，模拟下发系统指令。
-
-### 2.4 异步数据接收模块 (Data Ingestion)
-处理外部高并发上报的遥测数据，使用消息队列进行削峰填谷。
-
-#### 核心函数与方法
-- **`ingest_data`** (`d:\dachuang\backend\routes\data_ingestion.py:11-34`)
-  - **用途**: 接收上报数据，利用 Redis 生成原子自增 `event_id`，投递至 Celery 队列。
-  - **异常处理**: Redis 不可用时静默降级，继续投递 Celery 任务。
-  - **性能指标**: API 响应极快 (< 20ms)，支持高并发接收。
-
-- **`process_data_async`** (`d:\dachuang\backend\tasks.py:24-42`)
-  - **用途**: Celery Worker 异步消费数据，执行数据清洗与入库 (`server_metric` 表)。
-  - **异常处理**: 失败支持最多 3 次重试 (`max_retries=3`)，退避时间 5 秒。
+**不适用场景**：单机个人运维、无 SSH 可达性的封闭网络、需要 Agent 主动推送且完全无法出网的场景。
 
 ---
 
-## 3. 前端功能模块 (Frontend)
+## 2. 技术架构
 
-### 3.1 视图与路由层 (Views & Router)
-- **全局路由守卫** (`d:\dachuang\frontend\src\router\index.js:39-49`)
-  - **功能**: 根据本地 `access_token` 控制页面访问权限。未登录重定向至 `/login`，已登录拦截 `/login` 和 `/register`。
-- **登录/注册页 (Login & Register)** (`d:\dachuang\frontend\src\views\Login.vue`, `Register.vue`)
-  - **功能**: 收集凭据并调用后端认证接口；提供表单验证。改版后采用了 `AuthLayout.vue` 进行左右分栏美化布局。
-- **控制台看板 (Dashboard)** (`d:\dachuang\frontend\src\views\Dashboard.vue`)
-  - **功能**: 展示服务器 CPU/内存/IOPS 核心指标。集成 Echarts 渲染 LSTM 预测曲线，利用 Timeline 组件展示 Isolation Forest 拦截的异常事件。
-- **AI 智能运维终端 (Terminal)** (`d:\dachuang\frontend\src\views\Terminal.vue`)
-  - **功能**: 提供类似命令行的交互界面 (GUI)，支持输入自然语言或系统指令，调用后端 `/execute_command` 进行验证执行，并展示安全审计日志 (RBAC拦截记录)。
+### 2.1 分层
 
-### 3.2 接口请求层 (API Request)
-- **`axios` 拦截器** (`d:\dachuang\frontend\src\utils\request.js:13-74`)
-  - **功能**: 
-    1. 请求时自动附加 `Authorization: Bearer <token>`。
-    2. 响应 401 时，触发无感刷新 Token 逻辑：暂停队列 -> 请求 `/refresh` -> 更新 Token -> 重放失败的请求。
-    3. 全局统一处理 429 限流与其它异常提示。
-
----
-
-## 4. 对外接口规格说明 (API/GUI Specification)
-
-### 4.1 REST API 规格
-
-| 模块 | 接口路径 | 方法 | 输入载荷 (JSON) | 输出格式 | 功能描述 | 权限 |
-| --- | --- | --- | --- | --- | --- | --- |
-| **Auth** | `/api/auth/register` | POST | `username`, `email`, `password` | `{code, message}` | 注册新用户 | 公开 |
-| **Auth** | `/api/auth/login` | POST | `username`, `password` | `{code, data: {access_token, refresh_token}}` | 用户登录 | 公开 |
-| **Auth** | `/api/auth/refresh` | POST | `refresh_token` | `{code, data: {access_token}}` | 刷新令牌 | 公开 |
-| **Metrics** | `/api/metrics/current`| GET | 无 | `{code, data: {cpu, memory, disk}}` | 获取实时服务器监控指标 | 需登录 |
-| **AI** | `/api/ai/predict` | POST | `features(list)`, `sequence(list)` | `{code, data: {is_anomaly, predicted_trend}}` | AI异常预测分析 | 需登录 |
-| **AI** | `/api/ai/execute_command`| POST | `command(str)` | `{code, message, data: {stdout}}` | AI运维命令执行(带高危拦截) | 需登录 |
-| **Data** | `/api/data/ingest` | POST | 任意遥测 JSON 数据 | `{status, eventId, message}` | 异步接收监控探针数据 | 公开 |
-
-### 4.2 客户端 GUI 规格
-- **`/login` (登录视图)**: 账号与密码输入框，校验失焦触发，底部附带跳转注册链接。
-- **`/register` (注册视图)**: 用户名、邮箱、密码输入框，严格校验密码复杂度（包含大小写、数字、特殊字符）。
-- **`/dashboard` (大盘视图)**: 四个核心指标卡（实时数字+趋势），LSTM时序曲线图表，异常事件时间轴。
-- **`/terminal` (终端视图)**: 黑色代码风格输入框与历史回显窗口，底部表格显示审计放行/拦截记录。
-
----
-
-## 5. 关键调用关系与流程图
-
-### 5.1 模块间调用关系图
-
-```mermaid
-graph TD
-    subgraph 前端应用 (Vue3)
-        Router[Vue Router & 守卫]
-        Axios[Axios 请求拦截与刷新]
-        Views[Dashboard/Terminal 等视图]
-    end
-
-    subgraph 后端服务 (Flask)
-        Auth[Auth 蓝图]
-        Security[安全与权限中间件]
-        Metrics[Metrics 蓝图]
-        AI[AI Analysis 蓝图]
-        Data[Data Ingestion 蓝图]
-    end
-
-    subgraph 异步任务系统
-        Redis[Redis 缓存/计数器]
-        Celery[Celery 消费者 Worker]
-        DB[(MySQL 数据库)]
-    end
-
-    Views --> Axios
-    Axios --> Router
-    Axios -->|1. 携带 Token| Security
-    Security -->|验证通过| Metrics
-    Security -->|验证通过| AI
-    Security -->|未携带/过期| Auth
-    
-    Data -->|生成自增ID| Redis
-    Data -->|投递任务| Celery
-    Celery -->|持久化| DB
-    Auth --> DB
+```
+前端 (Vue 3 + Vite + Element Plus + ECharts)
+   │  Axios（Bearer Token、401 无感刷新）、socket.io-client
+   ▼
+后端 (Flask + Flask-SocketIO/gevent)
+   ├── routes/      路由蓝图（14 个业务域）
+   ├── services/    业务服务（SSH、指标、风险评估、审计、备份…）
+   └── utils/       DB 连接池、Redis、JWT、加密、AI 客户端
+   │
+   ├──► MySQL    业务数据、指标、审计
+   ├──► Redis    事件计数、Celery broker
+   └──► SSH      受管服务器（paramiko）
 ```
 
-### 5.2 无感刷新 Token 时序图
+### 2.2 关键设计取舍
 
-```mermaid
-sequenceDiagram
-    participant Frontend as 前端 (Axios)
-    participant Backend as 后端服务
-    participant DB as MySQL
+| 决策 | 说明 |
+|------|------|
+| 采集走 SSH 而非 Agent | 免去在目标机部署组件，代价是采集频率受 SSH 握手开销限制（默认 10s） |
+| 天然不支持 Windows 目标机 | `METRICS_COMMAND` 依赖 `top/free/df`，仅适用于 Linux |
+| Redis 缺失可降级 | 事件计数回退为 1，不阻断主链路；Celery 不可用时同步执行路径仍工作 |
+| 数据库不可用则快速失败 | 注册/登录等接口返回 503 并给出 `last_error`，不做假成功 |
 
-    Frontend->>Backend: 1. 请求业务接口 (携带过期 access_token)
-    Backend-->>Frontend: 2. 返回 401 Unauthorized
-    Frontend->>Frontend: 3. 挂起后续请求到队列
-    Frontend->>Backend: 4. 请求 /api/auth/refresh (携带 refresh_token)
-    Backend->>DB: 5. 校验 refresh_token 状态
-    DB-->>Backend: 6. 验证合法
-    Backend-->>Frontend: 7. 下发新 access_token
-    Frontend->>Frontend: 8. 更新本地 Storage
-    Frontend->>Backend: 9. 携带新 token 重放之前失败的业务请求
-    Backend-->>Frontend: 10. 返回 200 成功数据
+---
+
+## 3. 功能模块
+
+### 3.1 认证与权限
+
+| 能力 | 说明 |
+|------|------|
+| 注册 / 登录 | bcrypt 存密码，签发 JWT 双令牌（Access 15min / Refresh 7d） |
+| 令牌刷新 | Refresh Token 与库中记录比对，支持主动吊销 |
+| RBAC | 角色：`operator` / `tenant_operator` / `tenant_admin` / `platform_admin` / `superadmin` |
+| 多租户 | 请求上下文携带 `tenant_id`，查询按租户隔离；`GET /api/tenants/`、`POST /api/tenants/`、`GET /api/tenants/context` |
+
+**接口**：`POST /api/auth/register`、`/login`、`/refresh`、`/logout`、`/mfa/request-code`、`/mfa/verify-code`
+
+### 3.2 服务器纳管
+
+| 能力 | 说明 |
+|------|------|
+| 新增服务器 | 支持 `password` / `key` 两种鉴权；密码经 Fernet 加密后存 `auth_data` JSON |
+| SSH 连通性测试 | `POST /api/servers/{id}/ssh-test` |
+| SSH 配置更新 | `PUT /api/servers/{id}/ssh-config` |
+| 主机指纹校验 | `SSH_STRICT_HOST_KEY=true` 时严格校验，开发环境可关闭 |
+
+> 注意：`servers.ssh_password_ciphertext` 列当前**未使用**，实际密文存于 `auth_data` JSON 的 `ssh_password` 字段（`enc$` 前缀）。该列为历史遗留，读取时不要依赖它。
+
+**接口**：`GET|POST /api/servers/`、`GET|DELETE /api/servers/{id}`、`POST /api/servers/{id}/ssh-test`、`PUT /api/servers/{id}/ssh-config`
+
+### 3.3 监控指标
+
+- 通过 SSH 执行单条聚合命令，一次取回 CPU / 内存 / 磁盘 / 网络四项指标。
+- 自动采集器按 `AUTO_COLLECT_INTERVAL_SECONDS`（默认 5s）轮询全部在线服务器。
+- 大屏支持 `server_id` 过滤与周期趋势（1h / 6h / 24h / 自定义）。
+- Kubernetes 概览依赖目标机已安装 `kubectl` 并配置集群上下文，否则返回空。
+
+**接口**：`GET /api/metrics/dashboard`、`/trend`、`/current`、`/k8s-overview`、`POST /api/metrics/collect`
+
+### 3.4 服务管理
+
+- 枚举常见服务（nginx / mysql / redis / docker / ssh / cron 等）状态与自启动状态。
+- 支持 start / stop / restart / autostart 切换。
+- 命令回退链：`systemctl` → `sudo -n systemctl` → `chkconfig` → `rc-update`。
+- 目标机账号需具备 NOPASSWD sudo 权限，否则返回 `permission_denied`（`error_type` 字段）。
+
+**接口**：`GET /api/services/list`、`POST /api/services/control`、`POST /api/services/autostart`
+
+### 3.5 运维终端（WebSocket）
+
+事件流：`terminal_connect` → `terminal_ready` → `terminal_command` → `terminal_output`
+
+- 命令先经风险评估：`LOW` 直接执行；`MEDIUM`/`HIGH` 拦截或要求 MFA。
+- `superadmin` 遇到 `HIGH` 命令时下发 `mfa_required`（含 `demo_code`，演示环境直接回传），
+  校验通过后下发 `mfa_result`，**需客户端重新提交命令**才会执行。
+- 会话空闲超时 `SESSION_TIMEOUT_SECONDS`（900s）后失效。
+
+**事件**：`terminal_connect`、`terminal_command`、`mfa_confirm`、`terminal_disconnect`
+**服务端推送**：`terminal_ready`、`terminal_output`、`terminal_error`、`terminal_timeout`、`mfa_required`、`mfa_result`
+
+### 3.6 风险评估模型
+
+`services/command_risk_service.py`：
+
+| 维度 | 规则 |
+|------|------|
+| 危险模式 | `rm -rf`、`dd`、`fdisk`、`mkfs`、`shutdown`、`reboot` 等每命中 +80 |
+| 管道 / 重定向 | 各 +10 |
+| 分级 | `>= 80` → HIGH，`>= 10` → MEDIUM，其余 LOW |
+| operator | MEDIUM 及以上一律拦截；开启 `TERMINAL_STRICT_WHITELIST` 时仅放行白名单 |
+| superadmin | HIGH 需 MFA 短码确认后才放行 |
+
+> 分级阈值与打分口径必须保持一致：早期版本 `>= 40` 才算 MEDIUM，导致
+> `cat /etc/passwd > /tmp/out`（得分 20）被判为 LOW 而放行，已修正为 `>= 10`。
+
+### 3.7 AI 分析与预测
+
+- `POST /api/ai/predict` — 接收特征序列，返回异常判定与趋势预测。
+- `GET /api/ai/predict/server/{server_id}` — 基于库中该服务器最新指标做预测。
+- `GET /api/ai/predict-alert/{server_id}` — 返回故障类型、风险等级、起因、应急方案与预防建议。
+- `POST /api/ai/execute_command` — 命令经白名单与风险评估后**通过 SSH 真实下发**；
+  缺 `server_id` 返回 400，SSH 失败返回 502，执行结果写入审计。
+
+> 该接口前端未直接使用（前端走 `/api/assistant/*`），保留为对外 API 与调试入口。
+
+### 3.8 智能助手
+
+两阶段执行模型：
+
+1. `POST /api/assistant/ops-plan` — 生成方案、风险评估，签发一次性 `execution_token`（TTL 300s）
+   - **风险不允许时直接 403，不签发令牌**
+2. `POST /api/assistant/ops-execute` — 校验令牌归属、consent、二次确认，按当前角色**重新评估风险**后经 SSH 执行
+
+审计动作：`assistant_plan`（`planned` / `blocked`）、`assistant_execute`（`success` / `failed` / `error`）
+
+> 有 `DEEPSEEK_API_KEY` 时调用大模型生成方案，否则回退到规则映射（`ai_source=fallback`）。
+
+**接口**：`POST /api/assistant/query`、`/suggestion/approve`、`/ops-plan`、`/ops-execute`
+
+### 3.9 批量命令审批
+
+流程：创建任务（`pending_approval`）→ 审批 → 逐台执行 → 记录每台结果。
+
+**接口**：`GET|POST /api/batch/jobs`、`POST /api/batch/jobs/{id}/approve`、`GET /api/batch/jobs/{id}/results`
+
+### 3.10 文件管理
+
+远程目录浏览、文件读取、在线编辑保存、新建目录、删除（需确认参数）。
+
+**接口**：`GET /api/files/list`、`/read`、`/server-info`、`POST /api/files/write`、`/mkdir`、`/delete`
+
+### 3.11 备份恢复
+
+支持数据库备份与配置备份任务，恢复需带确认开关。
+
+**接口**：`GET|POST /api/backup/jobs`、`POST /api/backup/restore`
+
+### 3.12 日志与审计
+
+- 日志检索与异常聚类：`GET /api/logs/search`、`/anomaly-clusters`
+- 审计查询与安全概览：`GET /api/audit/logs`、`GET /api/audit/security-overview`
+- `audit_logs` 记录字段：用户、角色、服务器、命令原文/解析后、风险分/等级、动作、结果、明细、时间
+
+### 3.13 数据接入（Agent 模式，可选）
+
+支持轻量 Agent 主动上报，作为 SSH 采集的补充通道。
+
+**接口**：`POST /api/data/ingest`、`GET /api/data/stats`、`POST /api/agents/register`、`/heartbeat`、`/metrics`、`GET /api/agents/servers`、`POST /api/agents/discover`
+
+---
+
+## 4. 前端视图
+
+| 路由 | 视图 | 主要能力 |
+|------|------|----------|
+| `/login`、`/register` | Login / Register | 登录注册，密码复杂度校验 |
+| `/dashboard` | Dashboard | 指标卡、趋势图、异常时间轴、K8s 概览 |
+| `/metrics/trend` | MetricTrend | 周期筛选与多指标趋势 |
+| `/servers` | Servers | 服务器纳管、SSH 测试 |
+| `/terminal` | Terminal | WebSocket 终端、MFA 确认、审计回显 |
+| `/services` | Services | 服务状态与控制 |
+| `/logs` | Logs | 日志检索与异常聚类 |
+| `/backup` | Backup | 备份任务与恢复 |
+| `/files` | FileManager | 远程文件浏览与编辑 |
+| `/batch` | BatchExec | 批量命令创建与审批 |
+| `/assistant` | Assistant | 方案生成与确认执行 |
+| `/tenants` | Tenants | 租户管理 |
+
+---
+
+## 5. 数据模型（主要表）
+
+| 表 | 用途 |
+|----|------|
+| `user` | 用户、角色、租户、refresh_token |
+| `tenants` | 租户 |
+| `servers` | 受管服务器与鉴权信息 |
+| `server_metrics` | 指标时序数据 |
+| `audit_logs` | 审计日志 |
+| `mfa_challenges` | MFA 短码挑战 |
+| `terminal_sessions` | 终端会话 |
+| `batch_jobs` / `batch_job_results` | 批量任务与逐台结果 |
+| `backup_jobs` / `backup_artifacts` / `restore_records` | 备份与恢复 |
+
+建表脚本：`deploy/init.sql`（**幂等**，可重复执行）。
+
+---
+
+## 6. 已知限制
+
+1. **仅支持 Linux 目标机**：采集与服务管理命令依赖 `top/free/df/systemctl`。
+2. **服务控制依赖 NOPASSWD sudo**：否则返回 `permission_denied`，属环境配置而非缺陷。
+3. **MFA 为演示形态**：短码通过响应体直接回传，生产环境需接短信/邮件。
+4. **Docker Compose 需 WSL2**：Windows 上若 WSL2 不可用，compose 无法启动；本地开发可用原生 MySQL + Redis。
+5. **无 License 文件**：开源前需补充。
+
+---
+
+## 7. 测试与验证
+
+```bash
+cd backend
+python -m pytest -q
 ```
 
-### 5.3 智能运维命令安全执行流程
+当前覆盖（86 个用例）：
 
-```mermaid
-sequenceDiagram
-    participant User as 用户 (Terminal GUI)
-    participant API as AI Analysis API
-    participant Sec as 安全模块 (validate_ai_command)
-    participant Sys as 宿主操作系统
+| 测试文件 | 覆盖内容 |
+|----------|----------|
+| `test_command_risk.py` | 危险命令拦截、管道/重定向分级、角色策略、自然语言映射 |
+| `test_ai_execute.py` | 命令拦截、缺参 400、真实 SSH 下发、SSH 失败 502 |
+| `test_assistant_ops.py` | 风险拦截不签发令牌、consent、令牌归属、重放拦截、审计写入 |
+| `test_auth_middleware.py` | JWT 校验、过期/伪造令牌、公开路径、安全响应头 |
+| `test_metrics_parse.py` | 指标输出解析、布尔严格解析 |
+| `test_service_manager.py` | 命令回退链、成功时不残留错误信息 |
+| `test_ssh_pty.py` | pty 默认关闭、显式开启、输出收集 |
+| `test_mfa_timezone.py` | MFA 过期时间使用本地时区 |
+| `test_redis_config.py` | Redis 惰性初始化、Celery URL 组装 |
+| `test_data_ingestion.py` | 数据接入、Redis 降级、空请求体 |
 
-    User->>API: POST /api/ai/execute_command (command="rm -rf /")
-    API->>Sec: 1. 调用校验函数
-    Sec->>Sec: 2. 匹配高危关键词 (包含 "rm ")
-    Sec-->>API: 3. 返回 (False, "禁止执行高危敏感命令")
-    API-->>User: 4. 返回 403 Forbidden (已被拦截)
-
-    User->>API: POST /api/ai/execute_command (command="df -h")
-    API->>Sec: 5. 调用校验函数
-    Sec->>Sec: 6. 关键词安全，进入白名单校验
-    Sec-->>API: 7. 返回 (True, "校验通过")
-    API->>Sys: 8. 执行系统命令 (模拟)
-    Sys-->>API: 9. 返回执行结果
-    API-->>User: 10. 返回 200 OK (命令执行成功)
-```
+CI（`.github/workflows/ci.yml`）在 push/PR 时执行后端 `pytest` 与前端 `npm run build`。

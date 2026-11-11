@@ -66,14 +66,20 @@ def _command_exists(server_id: int, cmd: str) -> bool:
 
 
 def _try_commands(server_id: int, commands: List[str], timeout: int = 20) -> Dict[str, Any]:
+    """按顺序尝试候选命令，返回第一条成功的执行结果。
+
+    命令链存在预期内的失败回退（例如 `systemctl` 因权限失败后改用
+    `sudo -n systemctl`）。成功时**不得**把前序失败信息写进 stderr，
+    否则接口会返回「ok=true 但 message 是报错」的矛盾结果，
+    调用方（如 services/control）会据此误判为失败。
+    """
     last = {"exit_status": 1, "stdout": "", "stderr": "no command executed"}
     errors: List[str] = []
     for cmd in commands:
         run = _run(server_id, cmd, timeout=timeout)
         last = run
         if run.get("exit_status") == 0:
-            if errors:
-                run["stderr"] = "\n".join(errors[-3:])
+            # 成功：保留本次执行的真实输出，丢弃前序回退产生的错误
             return run
         err = (run.get("stderr") or run.get("stdout") or "").strip()
         if err:

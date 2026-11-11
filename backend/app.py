@@ -15,7 +15,7 @@ from typing import Dict, Any
 
 from utils.env_loader import load_local_env
 from utils.db import is_db_available, get_last_db_error
-from utils.redis_client import redis_client
+from utils.redis_client import get_redis_client
 from tasks import celery_app
 
 load_local_env()
@@ -101,6 +101,7 @@ def _build_dependency_status() -> Dict[str, Any]:
         status["database"]["message"] = get_last_db_error() or "Database connection failed"
 
     try:
+        redis_client = get_redis_client()
         if redis_client is None:
             raise RuntimeError("Redis client not initialized")
         redis_client.ping()

@@ -46,7 +46,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import * as echarts from 'echarts'
+import echarts from '../utils/echarts'
 import request from '../utils/request'
 
 const route = useRoute()
