@@ -132,7 +132,8 @@ backend/                  Flask 后端 API + SocketIO
 backend/routes/           路由蓝图
 backend/services/         业务服务
 backend/utils/            安全、DB、Redis 等工具
-ai_engine/                模型训练与推理代码
+ai_engine/                模型训练与推理代码（数据集与模型产物不入库）
+ai_engine/README.md       数据集获取与模型生成说明
 data_collector/           数据采集预处理脚本
 deploy/init.sql           数据库初始化脚本
 docker-compose.yml        一键容器编排
@@ -390,4 +391,8 @@ CI 在 push / PR 时自动执行后端测试与前端构建。
 
 ## License
 
-当前仓库未显式声明 License，如需开源发布请补充许可证文件。
+本项目采用 [MIT License](LICENSE)。
+
+注意：仓库中的 AI 数据集（GAIA、UNSW-NB15）为第三方公开学术数据集，
+不在本许可证覆盖范围内，使用时请遵守其各自的许可与引用要求。
+详见 `ai_engine/README.md`。
